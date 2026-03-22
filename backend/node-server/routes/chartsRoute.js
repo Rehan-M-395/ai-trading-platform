@@ -15,11 +15,11 @@ const data = JSON.parse(fs.readFileSync(filePath, "utf-8"));
 router.get("/candles", (req, res) => {
     try {
     const limit = parseInt(req.query.limit) || 500;
-        const result = data.slice(-limit);
-        res.json({ "candles": result });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
+    const result = data.slice(-limit);
+    res.json({ data: result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 router.get('/test', (req, res) => {
