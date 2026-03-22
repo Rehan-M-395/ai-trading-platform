@@ -45,8 +45,10 @@ export function DashboardShell() {
       <Sidebar stocks={stocks} />
       <main className="flex-1 p-4 md:p-6 lg:p-7">
         <div className="mx-auto flex max-w-[1600px] animate-slideUp flex-col gap-6">
+          
           <Topbar user={user} />
           <Chart stock={primaryStock} />
+
           <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
             <StockInfoPanel stock={primaryStock} />
             <TradePanel stock={primaryStock} />

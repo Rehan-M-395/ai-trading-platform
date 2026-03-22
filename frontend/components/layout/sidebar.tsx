@@ -8,16 +8,17 @@ import {
 import { Logo } from "@/components/ui/logo";
 import { Watchlist } from "@/components/watchlist/watchlist";
 import { Stock } from "@/types/stock";
+import Link from "next/link";
 
 type SidebarProps = {
   stocks: Stock[];
 };
 
 const navItems = [
-  { label: "Dashboard", icon: LayoutGrid },
-  { label: "Markets", icon: CandlestickChart },
-  { label: "Signals", icon: Activity },
-  { label: "Portfolio", icon: BriefcaseBusiness }
+  { label: "Dashboard", icon: LayoutGrid, path: "/dashboard" },
+  { label: "Markets", icon: CandlestickChart, path: "/dashboard/markets" },
+  { label: "Signals", icon: Activity, path: "/dashboard/signals" },
+  { label: "Portfolio", icon: BriefcaseBusiness, path: "/dashboard/portfolio" }
 ];
 
 export function Sidebar({ stocks }: SidebarProps) {
@@ -27,21 +28,21 @@ export function Sidebar({ stocks }: SidebarProps) {
         <div className="glass-panel rounded-[2rem] p-5">
           <Logo />
           <nav className="mt-8 space-y-2">
-            {navItems.map(({ label, icon: Icon }, index) => (
-              <button
-                key={label}
-                className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-sm font-medium transition ${
-                  index === 0
-                    ? "bg-fuchsia-400/10 text-fuchsia-200"
-                    : "text-slate-400 hover:bg-white/[0.04] hover:text-slate-100"
-                }`}
-                type="button"
-              >
-                <Icon className="h-4 w-4" />
-                {label}
-              </button>
-            ))}
-          </nav>
+          {navItems.map(({ label, icon: Icon, path }, index) => (
+            <Link
+              key={label}
+              href={path}
+              className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-sm font-medium transition ${
+                index === 0
+                  ? "bg-fuchsia-400/10 text-fuchsia-200"
+                  : "text-slate-400 hover:bg-white/[0.04] hover:text-slate-100"
+              }`}
+            >
+              <Icon className="h-4 w-4" />
+              {label}
+            </Link>
+          ))}
+        </nav>
         </div>
         <div className="min-h-0 flex-1">
           <Watchlist stocks={stocks} />
