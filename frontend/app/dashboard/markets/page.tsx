@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   createChart,
   AreaSeries,
@@ -13,6 +13,7 @@ import {
   type IChartApi,
   type ISeriesApi,
   type UTCTimestamp,
+  createSeriesMarkers,
 } from "lightweight-charts";
 import {
   ArrowLeft,
@@ -20,8 +21,12 @@ import {
   Crosshair,
   Maximize2,
   Move3D,
+  Pause,
+  Play,
   Search,
   Settings2,
+  SkipBack,
+  SkipForward,
   Sparkles,
   TrendingUp,
   Waves,
@@ -32,7 +37,8 @@ import { useRouter } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import { getStoredUser, type StoredUser } from "@/lib/auth";
 import { cn } from "@/lib/utils";
-
+import { useReplay } from "../../../components/hooks/useReplay";
+ 
 type CandleData = {
   time: number;
   open: number;
@@ -78,6 +84,17 @@ const indicatorOptions = [
   { label: "Volume", key: "volume" },
   { label: "Trend Area", key: "area" },
 ];
+
+const PAGE_LIMIT = 200;
+const INITIAL_LIMIT = 300;
+const LOAD_MORE_THRESHOLD = 50;
+
+type CandleResponse = {
+  data?: CandleData[];
+  nextStart?: number;
+  hasMore?: boolean;
+  total?: number;
+};
 
 function simpleMovingAverage(data: ChartPoint[], period: number) {
   return data
@@ -185,6 +202,10 @@ export default function MarketsPage() {
   const smaSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const emaSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const areaSeriesRef = useRef<ISeriesApi<"Area"> | null>(null);
+  const replayMarkerRef = useRef<ReturnType<typeof createSeriesMarkers<UTCTimestamp>> | null>(
+    null,
+  );
+  const isSelectingReplayRef = useRef(false);
 
   const [user, setUser] = useState<StoredUser | null>(null);
   const [hydrated, setHydrated] = useState(false);
@@ -198,6 +219,125 @@ export default function MarketsPage() {
   const [showVolume, setShowVolume] = useState(false);
   const [showArea, setShowArea] = useState(false);
   const [hoveredPoint, setHoveredPoint] = useState<ChartPoint | null>(null);
+  const [isSelectingReplay, setIsSelectingReplay] = useState(false);
+  const [hoveredTime, setHoveredTime] = useState<UTCTimestamp | null>(null);
+  const [chartReady, setChartReady] = useState(false);
+
+  useEffect(() => {
+    isSelectingReplayRef.current = isSelectingReplay;
+  }, [isSelectingReplay]);
+
+  // Replay/backtesting state (drives candle + indicator rendering).
+  const {
+    isReplay,
+    isPlaying,
+    currentIndex: replayIndex,
+    speed: replaySpeed,
+    visibleData,
+    play,
+    pause,
+    stop,
+    forward,
+    backward,
+    setIndex: setReplayIndex,
+    setSpeed: setReplaySpeed,
+  } = useReplay(chartData);
+  const chartDataRef = useRef<ChartPoint[]>([]);
+  useEffect(() => {
+    chartDataRef.current = chartData;
+  }, [chartData]);
+
+  // If replay advances and the hovered candle is no longer in the visible slice,
+  // clear the hover overlay to avoid showing stale OHLC values.
+  useEffect(() => {
+    if (!hoveredPoint) return;
+    if (!visibleData.length) {
+      setHoveredPoint(null);
+      return;
+    }
+    const first = visibleData[0].time;
+    const last = visibleData[visibleData.length - 1].time;
+    if (hoveredPoint.time < first || hoveredPoint.time > last) {
+      setHoveredPoint(null);
+    }
+  }, [hoveredPoint, visibleData]);
+
+  const hasFittedRef = useRef(false);
+  const loadedStartsRef = useRef<Set<number>>(new Set());
+  const paginationRef = useRef({
+    hasMore: false,
+    isLoading: false,
+    nextStart: 0,
+  });
+
+  const mapToChartPoints = useCallback((raw: CandleData[]) => {
+    return raw.map((point, index) => ({
+      time: point.time as UTCTimestamp,
+      open: point.open,
+      high: point.high,
+      low: point.low,
+      close: point.close,
+      volume: point.volume ?? buildFallbackVolume(point, index),
+    }));
+  }, []);
+
+  const loadPreviousData = useCallback(async () => {
+    const chart = chartApiRef.current;
+    const { hasMore, isLoading, nextStart } = paginationRef.current;
+
+    if (!chart || isLoading || !hasMore) return;
+    if (isReplay) return; // disable pagination while replay mode is active
+    if (loadedStartsRef.current.has(nextStart)) return;
+
+    paginationRef.current.isLoading = true;
+    loadedStartsRef.current.add(nextStart);
+
+    try {
+      const res = await fetch(
+        `http://localhost:5000/api/charts/candles?start=${nextStart}&limit=${PAGE_LIMIT}&backward=1`,
+      );
+      if (!res.ok) throw new Error("Failed to fetch previous candle data");
+      const json = (await res.json()) as CandleResponse;
+      const olderRaw = json.data ?? [];
+
+      if (!olderRaw.length) {
+        paginationRef.current.hasMore = false;
+        return;
+      }
+
+      const olderPoints = mapToChartPoints(olderRaw);
+      const currentRange = chart.timeScale().getVisibleLogicalRange();
+      const shift =
+        typeof selectedInterval.groupBy === "number"
+          ? Math.max(1, Math.round(olderPoints.length / selectedInterval.groupBy))
+          : olderPoints.length;
+
+      setRawChartData((previous) => {
+        const existingTimes = new Set(previous.map((point) => point.time));
+        const uniqueOlder = olderPoints.filter((point) => !existingTimes.has(point.time));
+        return uniqueOlder.length ? [...uniqueOlder, ...previous] : previous;
+      });
+
+      paginationRef.current.nextStart = json.nextStart ?? nextStart;
+      paginationRef.current.hasMore = Boolean(json.hasMore);
+
+      if (currentRange) {
+        queueMicrotask(() => {
+          const latestChart = chartApiRef.current;
+          if (!latestChart) return;
+          latestChart.timeScale().setVisibleLogicalRange({
+            from: currentRange.from + shift,
+            to: currentRange.to + shift,
+          });
+        });
+      }
+    } catch (err: unknown) {
+      loadedStartsRef.current.delete(nextStart);
+      setError(err instanceof Error ? err.message : "Failed to load previous candles");
+    } finally {
+      paginationRef.current.isLoading = false;
+    }
+  }, [isReplay, mapToChartPoints, selectedInterval.groupBy]);
 
   useEffect(() => {
     const currentUser = getStoredUser();
@@ -301,8 +441,17 @@ export default function MarketsPage() {
     smaSeriesRef.current = sma;
     emaSeriesRef.current = ema;
     areaSeriesRef.current = area;
+    replayMarkerRef.current = createSeriesMarkers(
+      candles,
+      [],
+    ) as ReturnType<typeof createSeriesMarkers<UTCTimestamp>>;
+    setChartReady(true);
 
     const handleCrosshairMove = (param: MouseEventParams) => {
+      if (isSelectingReplayRef.current) {
+        setHoveredTime((param.time as UTCTimestamp | undefined) ?? null);
+      }
+
       const candleData = param.seriesData.get(candles) as CandlestickData<UTCTimestamp> | undefined;
       const volumeData = param.seriesData.get(volume) as HistogramData<UTCTimestamp> | undefined;
 
@@ -345,6 +494,8 @@ export default function MarketsPage() {
       smaSeriesRef.current = null;
       emaSeriesRef.current = null;
       areaSeriesRef.current = null;
+      replayMarkerRef.current = null;
+      setChartReady(false);
     };
   }, [hydrated]);
 
@@ -353,38 +504,106 @@ export default function MarketsPage() {
 
     setLoading(true);
     setError("");
+    loadedStartsRef.current.clear();
+    hasFittedRef.current = false;
 
-    fetch("http://localhost:5000/api/charts/candles")
-      .then((res) => {
-        if (!res.ok) throw new Error("Failed to fetch chart data");
-        return res.json();
-      })
-      .then((json: { data?: CandleData[] }) => {
-        const raw = json.data ?? [];
+    (async () => {
+      try {
+        const metaRes = await fetch("http://localhost:5000/api/charts/candles?start=0&limit=1");
+        if (!metaRes.ok) throw new Error("Failed to fetch chart data");
+        const metaJson = (await metaRes.json()) as CandleResponse;
+        const total = metaJson.total ?? 0;
+        if (!total) throw new Error("No market data received");
 
-        if (!raw.length) {
-          throw new Error("No market data received");
-        }
-
-        setRawChartData(
-          raw.map((point, index) => ({
-            time: point.time as UTCTimestamp,
-            open: point.open,
-            high: point.high,
-            low: point.low,
-            close: point.close,
-            volume: point.volume ?? buildFallbackVolume(point, index),
-          })),
+        const start = Math.max(0, total - INITIAL_LIMIT);
+        const dataRes = await fetch(
+          `http://localhost:5000/api/charts/candles?start=${start}&limit=${INITIAL_LIMIT}&backward=1`,
         );
-      })
-      .catch((err: Error) => {
-        setError(err.message ?? "Failed to load data");
+        if (!dataRes.ok) throw new Error("Failed to fetch initial candles");
+        const dataJson = (await dataRes.json()) as CandleResponse;
+        const raw = dataJson.data ?? [];
+        if (!raw.length) throw new Error("No market data received");
+
+        setRawChartData(mapToChartPoints(raw));
+        paginationRef.current.nextStart = dataJson.nextStart ?? start;
+        paginationRef.current.hasMore = Boolean(dataJson.hasMore);
+        loadedStartsRef.current.add(start);
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Failed to load data");
         setRawChartData([]);
-      })
-      .finally(() => {
+      } finally {
         setLoading(false);
-      });
-  }, [hydrated]);
+      }
+    })();
+  }, [hydrated, mapToChartPoints]);
+
+  useEffect(() => {
+    const chart = chartApiRef.current;
+    if (!chart || !chartReady) return;
+
+    const handleRangeChange = (range: { from: number; to: number } | null) => {
+      if (!range) return;
+      if (isReplay) return; // disable pagination during replay
+      if (range.from < LOAD_MORE_THRESHOLD) {
+        void loadPreviousData();
+      }
+    };
+
+    chart.timeScale().subscribeVisibleLogicalRangeChange(handleRangeChange);
+    return () => {
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleRangeChange);
+    };
+  }, [chartReady, isReplay, loadPreviousData]);
+
+  useEffect(() => {
+    const replayMarker = replayMarkerRef.current;
+
+    if (!replayMarker) return;
+
+    if (!isSelectingReplay || !hoveredTime) {
+      replayMarker.setMarkers([]);
+      return;
+    }
+
+    replayMarker.setMarkers([
+      {
+        time: hoveredTime,
+        position: "inBar",
+        color: "#d946ef",
+        shape: "circle",
+        text: "Replay",
+      },
+    ]);
+  }, [hoveredTime, isSelectingReplay]);
+
+  // Click only confirms replay start while selection mode is active.
+  useEffect(() => {
+    const chart = chartApiRef.current;
+    if (!chart || !chartReady) return;
+
+    const handleClick = (param: MouseEventParams) => {
+      if (!isSelectingReplayRef.current) return;
+
+      const t = param.time as UTCTimestamp | undefined;
+      if (!t) return;
+
+      const points = chartDataRef.current;
+      if (!points.length) return;
+
+      const idx = points.findIndex((p) => p.time === t);
+      if (idx < 0) return;
+
+      setReplayIndex(idx);
+      setHoveredTime(t);
+      setIsSelectingReplay(false);
+      play();
+    };
+
+    chart.subscribeClick(handleClick);
+    return () => {
+      chart.unsubscribeClick(handleClick);
+    };
+  }, [chartReady, play, setReplayIndex]);
 
   useEffect(() => {
     setChartData(aggregateChartData(rawChartData, selectedInterval.groupBy));
@@ -400,9 +619,9 @@ export default function MarketsPage() {
 
     if (!chart || !candles || !volume || !sma || !ema || !area) return;
 
-    candles.setData(chartData);
+    candles.setData(visibleData);
 
-    const volumeData = chartData.map((point) => ({
+    const volumeData = visibleData.map((point) => ({
       time: point.time,
       value: point.volume,
       color:
@@ -413,25 +632,28 @@ export default function MarketsPage() {
     volume.setData(volumeData);
     volume.applyOptions({ visible: showVolume });
 
-    sma.setData(simpleMovingAverage(chartData, 20));
+    sma.setData(simpleMovingAverage(visibleData, 20));
     sma.applyOptions({ visible: showSma });
 
-    ema.setData(exponentialMovingAverage(chartData, 50));
+    ema.setData(exponentialMovingAverage(visibleData, 50));
     ema.applyOptions({ visible: showEma });
 
-    const areaData = chartData.map((point) => ({
+    const areaData = visibleData.map((point) => ({
       time: point.time,
       value: point.close,
     }));
     area.setData(areaData);
     area.applyOptions({ visible: showArea });
 
-    chart.timeScale().fitContent();
-  }, [chartData, showArea, showEma, showSma, showVolume]);
+    if (!hasFittedRef.current && visibleData.length > 0) {
+      chart.timeScale().fitContent();
+      hasFittedRef.current = true;
+    }
+  }, [visibleData, showArea, showEma, showSma, showVolume]);
 
   const marketSnapshot = useMemo(() => {
-    const latest = chartData[chartData.length - 1];
-    const previous = chartData[chartData.length - 2];
+    const latest = visibleData[visibleData.length - 1];
+    const previous = visibleData[visibleData.length - 2];
     const delta = latest && previous ? latest.close - previous.close : 0;
     const deltaPct = previous?.close ? (delta / previous.close) * 100 : 0;
 
@@ -441,9 +663,9 @@ export default function MarketsPage() {
       high: latest ? latest.high.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "--",
       low: latest ? latest.low.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "--",
     };
-  }, [chartData]);
+  }, [visibleData]);
 
-  const activePoint = hoveredPoint ?? chartData[chartData.length - 1] ?? null;
+  const activePoint = hoveredPoint ?? visibleData[visibleData.length - 1] ?? null;
 
   if (!hydrated || !user) {
     return (
@@ -548,12 +770,13 @@ export default function MarketsPage() {
                   <button
                     key={option.label}
                     className={cn(
-                      "rounded-xl border px-3 py-2 text-xs font-semibold uppercase tracking-[0.24em] transition",
+                      "rounded-xl border px-3 py-2 text-xs font-semibold uppercase tracking-[0.24em] transition disabled:cursor-not-allowed disabled:opacity-40",
                       selectedInterval.label === option.label
                         ? "border-fuchsia-400/25 bg-fuchsia-400/12 text-fuchsia-200"
                         : "border-white/10 bg-white/[0.03] text-slate-400 hover:text-white",
                     )}
                     onClick={() => setSelectedInterval(option)}
+                    disabled={isReplay}
                     type="button"
                   >
                     {option.label}
@@ -581,6 +804,97 @@ export default function MarketsPage() {
                 <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-[11px] uppercase tracking-[0.24em] text-slate-400">
                   AI Bias: Bullish
                 </span>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-full border border-accent/20 bg-white/[0.03] px-3 py-1 text-[11px] uppercase tracking-[0.24em] text-accent">
+                    Replay
+                  </span>
+
+                  <button
+                    type="button"
+                    onClick={() => (isPlaying ? pause() : play())}
+                    className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03] text-slate-200 transition hover:border-accent/30 hover:text-accent"
+                    disabled={!visibleData.length}
+                    aria-label={isPlaying ? "Pause replay" : "Play replay"}
+                    title={isPlaying ? "Pause replay" : "Play replay"}
+                  >
+                    {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      pause();
+                      setIsSelectingReplay(true);
+                      setHoveredTime(null);
+                    }}
+                    className={cn(
+                      "rounded-xl border px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] transition",
+                      isSelectingReplay
+                        ? "border-fuchsia-400/25 bg-fuchsia-400/12 text-fuchsia-200"
+                        : "border-white/10 bg-white/[0.03] text-slate-200 hover:border-accent/30 hover:text-accent",
+                    )}
+                    disabled={!chartData.length}
+                  >
+                    Select Replay Start
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      stop();
+                      setIsSelectingReplay(false);
+                      setHoveredTime(null);
+                    }}
+                    disabled={!isReplay && !isSelectingReplay}
+                    className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-200 transition hover:border-rose-400/30 hover:text-rose-300 disabled:opacity-40 disabled:hover:border-white/10"
+                  >
+                    Stop
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={backward}
+                    disabled={!isReplay}
+                    className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03] text-slate-200 transition hover:border-accent/30 hover:text-accent disabled:opacity-40 disabled:hover:border-white/10"
+                    aria-label="Replay backward"
+                    title="Replay backward"
+                  >
+                    <SkipBack className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={forward}
+                    disabled={!isReplay}
+                    className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03] text-slate-200 transition hover:border-accent/30 hover:text-accent disabled:opacity-40 disabled:hover:border-white/10"
+                    aria-label="Replay forward"
+                    title="Replay forward"
+                  >
+                    <SkipForward className="h-4 w-4" />
+                  </button>
+
+                  <div className="flex items-center gap-1 ml-1">
+                    {[1000, 500, 200].map((ms) => {
+                      const label = ms === 1000 ? "1x" : ms === 500 ? "2x" : "5x";
+                      const active = replaySpeed === ms;
+                      return (
+                        <button
+                          key={ms}
+                          type="button"
+                          onClick={() => setReplaySpeed(ms)}
+                          disabled={!isReplay}
+                          className={`rounded-lg border px-2 py-1 text-[11px] font-bold transition ${
+                            active
+                              ? "border-accent/30 bg-accent/10 text-accent"
+                              : "border-white/10 bg-transparent text-slate-400 hover:text-foreground"
+                          } disabled:opacity-40`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
 
               <div className="hidden items-center gap-2 md:flex">

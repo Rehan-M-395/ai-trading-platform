@@ -17,33 +17,31 @@ dotenv.config({ path: path.resolve(__dirname, "../.env") });
 const API_KEY = process.env.MARKETAUX_API_KEY;
 console.log("API KEY:", API_KEY);
 
-router.get("/news", async (req, res) => {
+router.get("/marketNews", async (req, res) => {
   try {
     if (!API_KEY) {
       return res.status(500).json({ error: "API key missing" });
     }
 
-    const url = `https://api.marketaux.com/v1/news/all`;
+    let { symbol } = req.query;
 
-    const response = await axios.get(url, {
-      params: {
-        symbols: "TCS.NS,RELIANCE.NS",
-        language: "en",
-        api_token: API_KEY,
-      },
-    });
+    const params = {
+      language: "en",
+      limit: 10,
+      api_token: API_KEY,
+    };
 
-    const newsData = response.data.data;
+    if (symbol) {
+      params.symbols = symbol;
+      params.filter_entities = true; 
+    }
 
-    newsData.forEach((news, index) => {
-      console.log(`\n📰 News ${index + 1}`);
-      console.log("Title:", news.title);
-      console.log("Sentiment:", news.sentiment);
-      console.log("Source:", news.source);
-      console.log("URL:", news.url);
-    });
+    const response = await axios.get(
+      "https://api.marketaux.com/v1/news/all",
+      { params }
+    );
 
-    res.json({ data: newsData });
+    res.json({ data: response.data.data });
 
   } catch (error) {
     console.error("Error fetching news:", error.response?.data || error.message);

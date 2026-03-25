@@ -13,17 +13,24 @@ const filePath = path.join(__dirname, "../../cleaned_data.json");
 const data = JSON.parse(fs.readFileSync(filePath, "utf-8"));
 
 router.get("/candles", (req, res) => {
-    try {
-    const limit = parseInt(req.query.limit) || 500;
-    const result = data.slice(-limit);
-    res.json({ data: result });
+  try {
+    const start = parseInt(req.query.start) || 0;
+    const limit = parseInt(req.query.limit) || 200;
+    const backward = req.query.backward === "1";
+
+    const result = data.slice(start, start + limit);
+    const nextStart = backward ? Math.max(0, start - limit) : start + limit;
+    const hasMore = backward ? start > 0 : start + limit < data.length;
+
+    res.json({
+      data: result,
+      nextStart,
+      hasMore,
+      total: data.length,
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
-
-router.get('/test', (req, res) => {
-    res.json({ message: 'Hello World' });
-})
 
 export default router;

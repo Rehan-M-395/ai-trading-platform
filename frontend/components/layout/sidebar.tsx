@@ -17,7 +17,7 @@ type SidebarProps = {
 const navItems = [
   { label: "Dashboard", icon: LayoutGrid, path: "/dashboard" },
   { label: "Markets", icon: CandlestickChart, path: "/dashboard/markets" },
-  { label: "Signals", icon: Activity, path: "/dashboard/signals" },
+  { label: "News", icon: Activity, path: "/dashboard/marketNews" },
   { label: "Portfolio", icon: BriefcaseBusiness, path: "/dashboard/portfolio" }
 ];
 
