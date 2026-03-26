@@ -41,6 +41,7 @@ import { useReplay } from "../../../components/hooks/useReplay";
  
 type CandleData = {
   time: number;
+  date?: string;
   open: number;
   high: number;
   low: number;
@@ -130,6 +131,59 @@ function buildFallbackVolume(point: CandleData, index: number) {
   return Math.round((movement + point.high - point.low) * 12000 + (index + 1) * 180);
 }
 
+function toChartTimestamp(point: CandleData): UTCTimestamp {
+  const timestampMs = point.date
+    ? new Date(point.date).getTime()
+    : point.time * 1000;
+
+  return Math.floor(timestampMs / 1000) as UTCTimestamp;
+}
+
+function isMarketHour(timestamp: number): boolean {
+  const date = new Date(timestamp * 1000);
+  const utcMinutes = date.getUTCHours() * 60 + date.getUTCMinutes();
+  const marketOpenUtcMinutes = 3 * 60 + 45;
+  const marketCloseUtcMinutes = 10 * 60;
+
+  return utcMinutes >= marketOpenUtcMinutes && utcMinutes <= marketCloseUtcMinutes;
+}
+
+function isSameUtcSession(left: UTCTimestamp, right: UTCTimestamp): boolean {
+  const leftDate = new Date(Number(left) * 1000);
+  const rightDate = new Date(Number(right) * 1000);
+
+  return (
+    leftDate.getUTCFullYear() === rightDate.getUTCFullYear() &&
+    leftDate.getUTCMonth() === rightDate.getUTCMonth() &&
+    leftDate.getUTCDate() === rightDate.getUTCDate()
+  );
+}
+
+function addSessionBreaks<T extends { time: UTCTimestamp }>(
+  data: T[],
+  getValue: (point: T) => number,
+) {
+  const result: Array<{ time: UTCTimestamp; value: number } | { time: UTCTimestamp }> = [];
+
+  for (let index = 0; index < data.length; index += 1) {
+    const point = data[index];
+    const nextPoint = data[index + 1];
+
+    result.push({
+      time: point.time,
+      value: getValue(point),
+    });
+
+    if (nextPoint && !isSameUtcSession(point.time, nextPoint.time)) {
+      result.push({
+        time: (Number(point.time) + 60) as UTCTimestamp,
+      });
+    }
+  }
+
+  return result;
+}
+
 function formatDateLabel(time: UTCTimestamp) {
   return new Intl.DateTimeFormat("en-IN", {
     day: "2-digit",
@@ -137,6 +191,7 @@ function formatDateLabel(time: UTCTimestamp) {
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+    timeZone: "Asia/Kolkata",
   }).format(new Date(Number(time) * 1000));
 }
 
@@ -271,14 +326,20 @@ export default function MarketsPage() {
   });
 
   const mapToChartPoints = useCallback((raw: CandleData[]) => {
-    return raw.map((point, index) => ({
-      time: point.time as UTCTimestamp,
-      open: point.open,
-      high: point.high,
-      low: point.low,
-      close: point.close,
-      volume: point.volume ?? buildFallbackVolume(point, index),
-    }));
+    return raw
+      .map((point, index) => {
+        const timestamp = toChartTimestamp(point);
+
+        return {
+          time: timestamp,
+          open: point.open,
+          high: point.high,
+          low: point.low,
+          close: point.close,
+          volume: point.volume ?? buildFallbackVolume(point, index),
+        } satisfies ChartPoint;
+      })
+      .filter((point) => isMarketHour(point.time));
   }, []);
 
   const loadPreviousData = useCallback(async () => {
@@ -632,16 +693,13 @@ export default function MarketsPage() {
     volume.setData(volumeData);
     volume.applyOptions({ visible: showVolume });
 
-    sma.setData(simpleMovingAverage(visibleData, 20));
+    sma.setData(addSessionBreaks(simpleMovingAverage(visibleData, 20), (point) => point.value));
     sma.applyOptions({ visible: showSma });
 
-    ema.setData(exponentialMovingAverage(visibleData, 50));
+    ema.setData(addSessionBreaks(exponentialMovingAverage(visibleData, 50), (point) => point.value));
     ema.applyOptions({ visible: showEma });
 
-    const areaData = visibleData.map((point) => ({
-      time: point.time,
-      value: point.close,
-    }));
+    const areaData = addSessionBreaks(visibleData, (point) => point.close);
     area.setData(areaData);
     area.applyOptions({ visible: showArea });
 
@@ -812,9 +870,16 @@ export default function MarketsPage() {
 
                   <button
                     type="button"
-                    onClick={() => (isPlaying ? pause() : play())}
+                    onClick={() => {
+                      if (!isReplay) return;
+                      if (isPlaying) {
+                        pause();
+                        return;
+                      }
+                      play();
+                    }}
                     className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03] text-slate-200 transition hover:border-accent/30 hover:text-accent"
-                    disabled={!visibleData.length}
+                    disabled={!visibleData.length || (!isReplay && !isSelectingReplay)}
                     aria-label={isPlaying ? "Pause replay" : "Play replay"}
                     title={isPlaying ? "Pause replay" : "Play replay"}
                   >
