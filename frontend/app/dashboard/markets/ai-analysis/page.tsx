@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Bot } from "lucide-react";
 
@@ -109,7 +110,84 @@ function analyzeCandles(data: Candle[]): AnalysisResult {
 
 export default function AIAnalysisPage() {
   const candleData = candles as Candle[];
-  const result = analyzeCandles(candleData);
+  const baseResult = useMemo(() => analyzeCandles(candleData), [candleData]);
+  const [result, setResult] = useState<AnalysisResult>(baseResult);
+  const [apiStatus, setApiStatus] = useState<"idle" | "loading" | "ok" | "error">("idle");
+  const [apiMessage, setApiMessage] = useState("Waiting for analysis...");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function fetchTrendlineFromAI() {
+      setApiStatus("loading");
+      setApiMessage("Running trendline AI...");
+
+      try {
+        const payload = candleData.map((candle, index) => ({
+          index,
+          time: toUtcTimestamp(candle),
+          open: candle.open,
+          high: candle.high,
+          low: candle.low,
+          close: candle.close,
+        }));
+
+        const response = await fetch("http://127.0.0.1:5000/trendline", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        });
+
+        const json = (await response.json()) as {
+          error?: string;
+          score?: number;
+          trendline?: {
+            start: { time: number; price: number };
+            end: { time: number; price: number };
+          };
+        };
+
+        if (!response.ok || !json.trendline) {
+          throw new Error(json.error ?? "Trendline API failed");
+        }
+        const trendline = json.trendline;
+
+        if (cancelled) return;
+
+        setResult((prev) => ({
+          ...prev,
+          confidence:
+            typeof json.score === "number"
+              ? Number(Math.max(0.4, Math.min(0.95, (json.score + 30) / 100)).toFixed(2))
+              : prev.confidence,
+          trendlines: [
+            {
+              startTime: trendline.start.time,
+              startPrice: trendline.start.price,
+              endTime: trendline.end.time,
+              endPrice: trendline.end.price,
+            },
+          ],
+        }));
+        setApiStatus("ok");
+        setApiMessage("Trendline drawn from Python AI API.");
+      } catch (error) {
+        if (cancelled) return;
+        setApiStatus("error");
+        setApiMessage(error instanceof Error ? error.message : "Failed to fetch AI trendline");
+        // Keep UI functional with local fallback analysis.
+        setResult(baseResult);
+      }
+    }
+
+    void fetchTrendlineFromAI();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [baseResult, candleData]);
 
   return (
     <main className="min-h-screen bg-[linear-gradient(180deg,#06030b_0%,#020106_100%)] px-4 py-5 text-white md:px-6">
@@ -159,6 +237,17 @@ export default function AIAnalysisPage() {
             <div className="mt-6 rounded-xl border border-white/10 bg-slate-950/60 p-3 text-xs leading-6 text-slate-400">
               Trendlines and support/resistance overlays are auto-generated from the same JSON
               candles used by the chart and can later be swapped to backend AI responses.
+            </div>
+            <div
+              className={`mt-3 rounded-xl border p-3 text-xs ${
+                apiStatus === "error"
+                  ? "border-rose-400/30 bg-rose-500/10 text-rose-200"
+                  : apiStatus === "ok"
+                  ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-200"
+                  : "border-white/10 bg-white/[0.03] text-slate-300"
+              }`}
+            >
+              {apiMessage}
             </div>
           </aside>
         </section>
