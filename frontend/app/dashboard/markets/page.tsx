@@ -250,6 +250,10 @@ function aggregateChartData(data: ChartPoint[], groupBy: IntervalOption["groupBy
 
 export default function MarketsPage() {
   const router = useRouter();
+  const handleAIAnalysis = useCallback(() => {
+    router.push("/dashboard/markets/ai-analysis");
+  }, [router]);
+
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartApiRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -261,6 +265,7 @@ export default function MarketsPage() {
     null,
   );
   const isSelectingReplayRef = useRef(false);
+  const trendlineSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
 
   const [user, setUser] = useState<StoredUser | null>(null);
   const [hydrated, setHydrated] = useState(false);
@@ -277,6 +282,7 @@ export default function MarketsPage() {
   const [isSelectingReplay, setIsSelectingReplay] = useState(false);
   const [hoveredTime, setHoveredTime] = useState<UTCTimestamp | null>(null);
   const [chartReady, setChartReady] = useState(false);
+  const [selectedPoints, setSelectedPoints] = useState<UTCTimestamp[]>([]);
 
   useEffect(() => {
     isSelectingReplayRef.current = isSelectingReplay;
@@ -324,6 +330,26 @@ export default function MarketsPage() {
     isLoading: false,
     nextStart: 0,
   });
+
+  useEffect(() => {
+    if (!chartReady) return;
+  
+    const trendline = trendlineSeriesRef.current;
+    if (!trendline) return;
+  
+    console.log("Setting NEW trendline ✅");
+  
+    trendline.setData([
+      {
+        time: 1768975200 as UTCTimestamp,
+        value: 25024.45
+      },
+      {
+        time: 1769074200 as UTCTimestamp,
+        value: 25238.8
+      }
+    ]);
+  }, [chartReady]);
 
   const mapToChartPoints = useCallback((raw: CandleData[]) => {
     return raw
@@ -496,12 +522,18 @@ export default function MarketsPage() {
       lastValueVisible: false,
     });
 
+    const trendline = chart.addSeries(LineSeries, {
+      color: "#3b82f6",
+      lineWidth: 2,
+    });
+
     chartApiRef.current = chart;
     candleSeriesRef.current = candles;
     volumeSeriesRef.current = volume;
     smaSeriesRef.current = sma;
     emaSeriesRef.current = ema;
     areaSeriesRef.current = area;
+    trendlineSeriesRef.current = trendline;
     replayMarkerRef.current = createSeriesMarkers(
       candles,
       [],
@@ -643,21 +675,26 @@ export default function MarketsPage() {
     if (!chart || !chartReady) return;
 
     const handleClick = (param: MouseEventParams) => {
-      if (!isSelectingReplayRef.current) return;
-
       const t = param.time as UTCTimestamp | undefined;
       if (!t) return;
-
-      const points = chartDataRef.current;
-      if (!points.length) return;
-
-      const idx = points.findIndex((p) => p.time === t);
-      if (idx < 0) return;
-
-      setReplayIndex(idx);
-      setHoveredTime(t);
-      setIsSelectingReplay(false);
-      play();
+    
+      setSelectedPoints(prev => {
+        // First click
+        if (prev.length === 0) {
+          console.log("Point 1 selected:", t);
+          return [t];
+        }
+    
+        // Second click
+        if (prev.length === 1) {
+          console.log("Point 2 selected:", t);
+          return [prev[0], t];
+        }
+    
+        // Reset after 2 points
+        console.log("Resetting selection");
+        return [t];
+      });
     };
 
     chart.subscribeClick(handleClick);
@@ -669,6 +706,65 @@ export default function MarketsPage() {
   useEffect(() => {
     setChartData(aggregateChartData(rawChartData, selectedInterval.groupBy));
   }, [rawChartData, selectedInterval]);
+
+  useEffect(() => {
+    if (selectedPoints.length !== 2) return;
+  
+    const trendline = trendlineSeriesRef.current;
+    if (!trendline) return;
+  
+    const p1 = selectedPoints[0];
+    const p2 = selectedPoints[1];
+  
+    // 🔥 find price from candles
+    const c1 = visibleData.find(c => c.time === p1);
+    const c2 = visibleData.find(c => c.time === p2);
+  
+    if (!c1 || !c2) return;
+  
+    trendline.setData([
+      { time: p1, value: c1.low },  // or close
+      { time: p2, value: c2.low }
+    ]);
+  
+  }, [selectedPoints, visibleData]);
+
+  useEffect(() => {
+  if (selectedPoints.length !== 2) return;
+
+  const trendline = trendlineSeriesRef.current;
+  if (!trendline) return;
+
+  const p1 = selectedPoints[0];
+  const p2 = selectedPoints[1];
+
+  // 🔥 find price from candles
+  const c1 = visibleData.find(c => c.time === p1);
+  const c2 = visibleData.find(c => c.time === p2);
+
+  if (!c1 || !c2) return;
+
+  trendline.setData([
+    { time: p1, value: c1.low },  // or close
+    { time: p2, value: c2.low }
+  ]);
+
+}, [selectedPoints, visibleData]);
+
+  useEffect(() => {
+    const candleSeries = candleSeriesRef.current;
+    if (!candleSeries) return;
+  
+    const markers = selectedPoints.map((time, index) => ({
+      time,
+      position: "aboveBar" as const,
+      color: index === 0 ? "yellow" : "red",
+      shape: "circle" as const,
+      text: index === 0 ? "1" : "2"
+    }));
+  
+    createSeriesMarkers(candleSeries, markers);
+  }, [selectedPoints]);
 
   useEffect(() => {
     const chart = chartApiRef.current;
@@ -847,6 +943,14 @@ export default function MarketsPage() {
                 type="button"
               >
                 <Settings2 className="h-4 w-4" />
+              </button>
+
+              <button
+                onClick={handleAIAnalysis}
+                type="button"
+                className="h-11 rounded-xl border border-sky-400/20 bg-sky-500/10 px-4 text-xs font-semibold uppercase tracking-[0.14em] text-sky-200 transition hover:border-sky-300/40 hover:bg-sky-500/15"
+              >
+                AI Analysis
               </button>
             </div>
           </div>
