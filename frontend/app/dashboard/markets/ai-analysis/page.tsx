@@ -39,6 +39,8 @@ type AnalysisResult = {
   }>;
 };
 
+const ANALYSIS_CANDLE_WINDOW = 300;
+
 function toUtcTimestamp(candle: Candle): number {
   const ms = candle.date ? new Date(candle.date).getTime() : (candle.time ?? 0) * 1000;
   return Math.floor(ms / 1000);
@@ -110,7 +112,11 @@ function analyzeCandles(data: Candle[]): AnalysisResult {
 
 export default function AIAnalysisPage() {
   const candleData = candles as Candle[];
-  const baseResult = useMemo(() => analyzeCandles(candleData), [candleData]);
+  const analysisWindow = useMemo(
+    () => candleData.slice(-ANALYSIS_CANDLE_WINDOW),
+    [candleData],
+  );
+  const baseResult = useMemo(() => analyzeCandles(analysisWindow), [analysisWindow]);
   const [result, setResult] = useState<AnalysisResult>(baseResult);
   const [apiStatus, setApiStatus] = useState<"idle" | "loading" | "ok" | "error">("idle");
   const [apiMessage, setApiMessage] = useState("Waiting for analysis...");
@@ -123,7 +129,7 @@ export default function AIAnalysisPage() {
       setApiMessage("Running trendline AI...");
 
       try {
-        const payload = candleData.map((candle, index) => ({
+        const payload = analysisWindow.map((candle, index) => ({
           index,
           time: toUtcTimestamp(candle),
           open: candle.open,
@@ -139,6 +145,8 @@ export default function AIAnalysisPage() {
           },
           body: JSON.stringify(payload),
         });
+
+        console.log(response)
 
         const json = (await response.json()) as {
           error?: string;
@@ -187,7 +195,7 @@ export default function AIAnalysisPage() {
     return () => {
       cancelled = true;
     };
-  }, [baseResult, candleData]);
+  }, [analysisWindow, baseResult]);
 
   return (
     <main className="min-h-screen bg-[linear-gradient(180deg,#06030b_0%,#020106_100%)] px-4 py-5 text-white md:px-6">
@@ -249,6 +257,9 @@ export default function AIAnalysisPage() {
             >
               {apiMessage}
             </div>
+            <p className="mt-2 text-[11px] text-slate-500">
+              AI input window: last {ANALYSIS_CANDLE_WINDOW} candles.
+            </p>
           </aside>
         </section>
       </div>

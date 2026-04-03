@@ -123,7 +123,7 @@ def calculate_trendline():
 
 
 # Health check
-@app.route("/", methods=["GET"])
+@app.route("/trendline", methods=["GET"])
 def home():
     return jsonify({"message": "Trendline AI API running"})
 
