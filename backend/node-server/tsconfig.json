@@ -10,6 +10,6 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["server.ts", "routes/**/*.ts"],
+  "include": ["**/*.ts"],
   "exclude": ["dist", "node_modules"]
 }
