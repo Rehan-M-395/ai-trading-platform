@@ -3,20 +3,22 @@ import { createClient } from "@supabase/supabase-js";
 
 dotenv.config();
 
-function getRequiredEnv(primaryKey: string, fallbackKey: string): string {
-  const value = process.env[primaryKey] ?? process.env[fallbackKey];
-  if (!value) {
-    throw new Error(
-      `Missing env: set ${primaryKey} (or ${fallbackKey} as fallback).`,
-    );
+function getRequiredEnv(...keys: string[]): string {
+  for (const key of keys) {
+    const value = process.env[key];
+    if (value) {
+      return value;
+    }
   }
-  return value;
+
+  throw new Error(`Missing env: set one of ${keys.join(", ")}.`);
 }
 
 const supabaseUrl = getRequiredEnv("SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL");
-const supabaseAnonKey = getRequiredEnv(
+const supabaseKey = getRequiredEnv(
+  "SUPABASE_SECRET_KEY",
+  "SUPABASE_SERVICE_ROLE_KEY",
   "SUPABASE_PUBLISHABLE_DEFAULT_KEY",
-  "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY",
 );
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const supabase = createClient(supabaseUrl, supabaseKey);

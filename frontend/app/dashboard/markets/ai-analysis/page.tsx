@@ -112,6 +112,8 @@ function analyzeCandles(data: Candle[]): AnalysisResult {
 
 export default function AIAnalysisPage() {
   const candleData = candles as Candle[];
+  const trendlineApiUrl =
+    process.env.NEXT_PUBLIC_TRENDLINE_API_URL ?? "http://127.0.0.1:5001";
   const analysisWindow = useMemo(
     () => candleData.slice(-ANALYSIS_CANDLE_WINDOW),
     [candleData],
@@ -138,7 +140,7 @@ export default function AIAnalysisPage() {
           close: candle.close,
         }));
 
-        const response = await fetch("http://127.0.0.1:5000/trendline", {
+        const response = await fetch(`${trendlineApiUrl}/trendline`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -195,7 +197,7 @@ export default function AIAnalysisPage() {
     return () => {
       cancelled = true;
     };
-  }, [analysisWindow, baseResult]);
+  }, [analysisWindow, baseResult, trendlineApiUrl]);
 
   return (
     <main className="min-h-screen bg-[linear-gradient(180deg,#06030b_0%,#020106_100%)] px-4 py-5 text-white md:px-6">
