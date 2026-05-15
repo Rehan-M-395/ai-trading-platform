@@ -60,15 +60,17 @@ type ChartPoint = {
 
 type IntervalOption = {
   label: string;
-  groupBy: number | "day" | "month";
+  groupBy: number | "day";
 };
 
 const intervalOptions: IntervalOption[] = [
-  { label: "15m", groupBy: 1 },
-  { label: "30m", groupBy: 2 },
-  { label: "1H", groupBy: 4 },
+  { label: "1m", groupBy: 1 },
+  { label: "5m", groupBy: 5 },
+  { label: "10m", groupBy: 10 },
+  { label: "15m", groupBy: 15 },
+  { label: "30m", groupBy: 30 },
+  { label: "1H", groupBy: 60 },
   { label: "1D", groupBy: "day" },
-  { label: "1M", groupBy: "month" },
 ];
 
 const sidebarTools = [
@@ -95,6 +97,14 @@ type CandleResponse = {
   nextStart?: number;
   hasMore?: boolean;
   total?: number;
+};
+
+type StockMeta = {
+  id: number;
+  exchange: string;
+  symbol_token: string;
+  trading_symbol: string;
+  name: string | null;
 };
 
 function simpleMovingAverage(data: ChartPoint[], period: number) {
@@ -195,6 +205,15 @@ function formatDateLabel(time: UTCTimestamp) {
   }).format(new Date(Number(time) * 1000));
 }
 
+function formatChartAxisTime(time: UTCTimestamp) {
+  return new Intl.DateTimeFormat("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "Asia/Kolkata",
+  }).format(new Date(Number(time) * 1000));
+}
+
 function aggregateChunk(points: ChartPoint[]) {
   const first = points[0];
   const last = points[points.length - 1];
@@ -214,15 +233,12 @@ function aggregateChartData(data: ChartPoint[], groupBy: IntervalOption["groupBy
     return data;
   }
 
-  if (groupBy === "day" || groupBy === "month") {
+  if (groupBy === "day") {
     const buckets = new Map<string, ChartPoint[]>();
 
     for (const point of data) {
       const date = new Date(Number(point.time) * 1000);
-      const key =
-        groupBy === "day"
-          ? `${date.getUTCFullYear()}-${date.getUTCMonth()}-${date.getUTCDate()}`
-          : `${date.getUTCFullYear()}-${date.getUTCMonth()}`;
+      const key = `${date.getUTCFullYear()}-${date.getUTCMonth()}-${date.getUTCDate()}`;
       const bucket = buckets.get(key);
 
       if (bucket) {
@@ -250,9 +266,7 @@ function aggregateChartData(data: ChartPoint[], groupBy: IntervalOption["groupBy
 
 export default function MarketsPage() {
   const router = useRouter();
-  const handleAIAnalysis = useCallback(() => {
-    router.push("/dashboard/markets/ai-analysis");
-  }, [router]);
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
 
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartApiRef = useRef<IChartApi | null>(null);
@@ -265,9 +279,14 @@ export default function MarketsPage() {
     null,
   );
   const isSelectingReplayRef = useRef(false);
+  const stopReplayRef = useRef<() => void>(() => {});
 
   const [user, setUser] = useState<StoredUser | null>(null);
   const [hydrated, setHydrated] = useState(false);
+  const [stocks, setStocks] = useState<StockMeta[]>([]);
+  const [stockLoading, setStockLoading] = useState(true);
+  const [selectedStockToken, setSelectedStockToken] = useState<string>("");
+  const [searchTerm, setSearchTerm] = useState("");
   const [rawChartData, setRawChartData] = useState<ChartPoint[]>([]);
   const [chartData, setChartData] = useState<ChartPoint[]>([]);
   const [loading, setLoading] = useState(true);
@@ -281,6 +300,19 @@ export default function MarketsPage() {
   const [isSelectingReplay, setIsSelectingReplay] = useState(false);
   const [hoveredTime, setHoveredTime] = useState<UTCTimestamp | null>(null);
   const [chartReady, setChartReady] = useState(false);
+  const lastFittedSymbolRef = useRef<string>("");
+
+  const selectedStock = useMemo(
+    () => stocks.find((stock) => stock.symbol_token === selectedStockToken) ?? null,
+    [selectedStockToken, stocks],
+  );
+
+  const handleAIAnalysis = useCallback(() => {
+    if (!selectedStock) return;
+    router.push(
+      `/dashboard/markets/ai-analysis?exchange=${selectedStock.exchange}&symboltoken=${selectedStock.symbol_token}&symbol=${encodeURIComponent(selectedStock.trading_symbol)}`,
+    );
+  }, [router, selectedStock]);
 
   useEffect(() => {
     isSelectingReplayRef.current = isSelectingReplay;
@@ -305,6 +337,28 @@ export default function MarketsPage() {
   useEffect(() => {
     chartDataRef.current = chartData;
   }, [chartData]);
+
+  useEffect(() => {
+    stopReplayRef.current = stop;
+  }, [stop]);
+
+  useEffect(() => {
+    setRawChartData([]);
+    setChartData([]);
+    setHoveredPoint(null);
+    setHoveredTime(null);
+    setError("");
+    setLoading(Boolean(selectedStock));
+    loadedStartsRef.current.clear();
+    paginationRef.current = {
+      hasMore: false,
+      isLoading: false,
+      nextStart: 0,
+    };
+    hasFittedRef.current = false;
+    lastFittedSymbolRef.current = "";
+    stopReplayRef.current();
+  }, [selectedStock?.symbol_token]);
 
   // If replay advances and the hovered candle is no longer in the visible slice,
   // clear the hover overlay to avoid showing stale OHLC values.
@@ -353,13 +407,14 @@ export default function MarketsPage() {
     if (!chart || isLoading || !hasMore) return;
     if (isReplay) return; // disable pagination while replay mode is active
     if (loadedStartsRef.current.has(nextStart)) return;
+    if (!selectedStock) return;
 
     paginationRef.current.isLoading = true;
     loadedStartsRef.current.add(nextStart);
 
     try {
       const res = await fetch(
-        `http://localhost:5000/api/charts/candles?start=${nextStart}&limit=${PAGE_LIMIT}&backward=1`,
+        `${apiUrl}/api/charts/candles?exchange=${selectedStock.exchange}&symboltoken=${selectedStock.symbol_token}&interval=ONE_MINUTE&start=${nextStart}&limit=${PAGE_LIMIT}&backward=1`,
       );
       if (!res.ok) throw new Error("Failed to fetch previous candle data");
       const json = (await res.json()) as CandleResponse;
@@ -402,7 +457,7 @@ export default function MarketsPage() {
     } finally {
       paginationRef.current.isLoading = false;
     }
-  }, [isReplay, mapToChartPoints, selectedInterval.groupBy]);
+  }, [apiUrl, isReplay, mapToChartPoints, selectedInterval.groupBy, selectedStock]);
 
   useEffect(() => {
     const currentUser = getStoredUser();
@@ -417,6 +472,33 @@ export default function MarketsPage() {
   }, [router]);
 
   useEffect(() => {
+    if (!hydrated) return;
+
+    setStockLoading(true);
+
+    (async () => {
+      try {
+        const response = await fetch(`${apiUrl}/api/stocks`);
+        if (!response.ok) {
+          throw new Error("Failed to fetch stocks");
+        }
+
+        const json = (await response.json()) as { data?: StockMeta[]; error?: string };
+        const fetchedStocks = json.data ?? [];
+        setStocks(fetchedStocks);
+
+        if (fetchedStocks.length) {
+          setSelectedStockToken((current) => current || fetchedStocks[0].symbol_token);
+        }
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Failed to fetch stocks");
+      } finally {
+        setStockLoading(false);
+      }
+    })();
+  }, [apiUrl, hydrated]);
+
+  useEffect(() => {
     const container = chartContainerRef.current;
     if (!container || !hydrated) return;
 
@@ -427,6 +509,9 @@ export default function MarketsPage() {
         background: { color: "transparent" },
         textColor: "#94a3b8",
         attributionLogo: false,
+      },
+      localization: {
+        timeFormatter: (time: number) => formatDateLabel(time as UTCTimestamp),
       },
       grid: {
         vertLines: { color: "rgba(148,163,184,0.08)" },
@@ -449,6 +534,7 @@ export default function MarketsPage() {
         borderColor: "rgba(148,163,184,0.14)",
         timeVisible: true,
         secondsVisible: false,
+        tickMarkFormatter: (time: number) => formatChartAxisTime(time as UTCTimestamp),
       },
     });
 
@@ -562,19 +648,22 @@ export default function MarketsPage() {
       replayMarkerRef.current = null;
       setChartReady(false);
     };
-  }, [hydrated]);
+  }, [hydrated, selectedStock?.symbol_token]);
 
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || !selectedStock) return;
 
     setLoading(true);
     setError("");
     loadedStartsRef.current.clear();
     hasFittedRef.current = false;
+    let cancelled = false;
 
     (async () => {
       try {
-        const metaRes = await fetch("http://localhost:5000/api/charts/candles?start=0&limit=1");
+        const metaRes = await fetch(
+          `${apiUrl}/api/charts/candles?exchange=${selectedStock.exchange}&symboltoken=${selectedStock.symbol_token}&interval=ONE_MINUTE&start=0&limit=1`,
+        );
         if (!metaRes.ok) throw new Error("Failed to fetch chart data");
         const metaJson = (await metaRes.json()) as CandleResponse;
         const total = metaJson.total ?? 0;
@@ -582,25 +671,32 @@ export default function MarketsPage() {
 
         const start = Math.max(0, total - INITIAL_LIMIT);
         const dataRes = await fetch(
-          `http://localhost:5000/api/charts/candles?start=${start}&limit=${INITIAL_LIMIT}&backward=1`,
+          `${apiUrl}/api/charts/candles?exchange=${selectedStock.exchange}&symboltoken=${selectedStock.symbol_token}&interval=ONE_MINUTE&start=${start}&limit=${INITIAL_LIMIT}&backward=1`,
         );
         if (!dataRes.ok) throw new Error("Failed to fetch initial candles");
         const dataJson = (await dataRes.json()) as CandleResponse;
         const raw = dataJson.data ?? [];
         if (!raw.length) throw new Error("No market data received");
+        if (cancelled) return;
 
         setRawChartData(mapToChartPoints(raw));
         paginationRef.current.nextStart = dataJson.nextStart ?? start;
         paginationRef.current.hasMore = Boolean(dataJson.hasMore);
         loadedStartsRef.current.add(start);
       } catch (err: unknown) {
+        if (cancelled) return;
         setError(err instanceof Error ? err.message : "Failed to load data");
         setRawChartData([]);
       } finally {
+        if (cancelled) return;
         setLoading(false);
       }
     })();
-  }, [hydrated, mapToChartPoints]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiUrl, hydrated, mapToChartPoints, selectedStock]);
 
   useEffect(() => {
     const chart = chartApiRef.current;
@@ -707,11 +803,22 @@ export default function MarketsPage() {
     area.setData(areaData);
     area.applyOptions({ visible: showArea });
 
+    if (
+      selectedStock &&
+      visibleData.length > 0 &&
+      lastFittedSymbolRef.current !== selectedStock.symbol_token
+    ) {
+      chart.timeScale().fitContent();
+      hasFittedRef.current = true;
+      lastFittedSymbolRef.current = selectedStock.symbol_token;
+      return;
+    }
+
     if (!hasFittedRef.current && visibleData.length > 0) {
       chart.timeScale().fitContent();
       hasFittedRef.current = true;
     }
-  }, [visibleData, showArea, showEma, showSma, showVolume]);
+  }, [selectedStock, visibleData, showArea, showEma, showSma, showVolume]);
 
   const marketSnapshot = useMemo(() => {
     const latest = visibleData[visibleData.length - 1];
@@ -728,6 +835,17 @@ export default function MarketsPage() {
   }, [visibleData]);
 
   const activePoint = hoveredPoint ?? visibleData[visibleData.length - 1] ?? null;
+  const filteredStocks = useMemo(() => {
+    const normalized = searchTerm.trim().toLowerCase();
+    if (!normalized) {
+      return stocks;
+    }
+
+    return stocks.filter((stock) => {
+      const haystack = `${stock.trading_symbol} ${stock.name ?? ""}`.toLowerCase();
+      return haystack.includes(normalized);
+    });
+  }, [searchTerm, stocks]);
 
   if (!hydrated || !user) {
     return (
@@ -806,11 +924,13 @@ export default function MarketsPage() {
               </div>
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-3">
-                  <h1 className="font-display text-2xl font-semibold text-white">RELIANCE</h1>
+                  <h1 className="font-display text-2xl font-semibold text-white">
+                    {selectedStock?.trading_symbol ?? "Select Symbol"}
+                  </h1>
                   <span className="rounded-full border border-emerald-400/15 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-300">
                     {marketSnapshot.change}
                   </span>
-                  <span className="text-sm text-slate-400">NSE</span>
+                  <span className="text-sm text-slate-400">{selectedStock?.exchange ?? "--"}</span>
                 </div>
                 <p className="mt-1 text-sm text-slate-400">
                   Rs. {marketSnapshot.price} | H {marketSnapshot.high} | L {marketSnapshot.low}
@@ -824,8 +944,31 @@ export default function MarketsPage() {
                 <Input
                   className="h-11 rounded-xl border-white/10 bg-white/[0.03] pl-11 focus:border-fuchsia-400/40 focus:ring-fuchsia-400/20"
                   placeholder="Search symbol"
+                  value={searchTerm}
+                  onChange={(event) => setSearchTerm(event.target.value)}
                 />
               </div>
+
+              <select
+                className="h-11 min-w-[240px] rounded-xl border border-white/10 bg-white/[0.03] px-4 text-sm text-white outline-none transition focus:border-fuchsia-400/40"
+                value={selectedStockToken}
+                onChange={(event) => {
+                  setSelectedStockToken(event.target.value);
+                }}
+                disabled={stockLoading || !filteredStocks.length}
+              >
+                {filteredStocks.length ? (
+                  filteredStocks.map((stock) => (
+                    <option key={stock.id} value={stock.symbol_token} className="bg-slate-950">
+                      {stock.trading_symbol} {stock.name ? `- ${stock.name}` : ""}
+                    </option>
+                  ))
+                ) : (
+                  <option value="" className="bg-slate-950">
+                    {stockLoading ? "Loading stocks..." : "No stocks found"}
+                  </option>
+                )}
+              </select>
 
               <div className="flex flex-wrap gap-2">
                 {intervalOptions.map((option) => (
@@ -838,7 +981,7 @@ export default function MarketsPage() {
                         : "border-white/10 bg-white/[0.03] text-slate-400 hover:text-white",
                     )}
                     onClick={() => setSelectedInterval(option)}
-                    disabled={isReplay}
+                    disabled={!selectedStock || isReplay}
                     type="button"
                   >
                     {option.label}
@@ -856,6 +999,7 @@ export default function MarketsPage() {
               <button
                 onClick={handleAIAnalysis}
                 type="button"
+                disabled={!selectedStock}
                 className="h-11 rounded-xl border border-sky-400/20 bg-sky-500/10 px-4 text-xs font-semibold uppercase tracking-[0.14em] text-sky-200 transition hover:border-sky-300/40 hover:bg-sky-500/15"
               >
                 AI Analysis
@@ -1002,6 +1146,12 @@ export default function MarketsPage() {
               {loading ? (
                 <div className="absolute inset-0 flex items-center justify-center bg-slate-950/40 text-sm text-slate-400 backdrop-blur-sm">
                   Loading market data...
+                </div>
+              ) : null}
+
+              {!loading && !selectedStock ? (
+                <div className="absolute inset-0 flex items-center justify-center bg-slate-950/40 text-sm text-slate-400 backdrop-blur-sm">
+                  Select a stock to load candles.
                 </div>
               ) : null}
 

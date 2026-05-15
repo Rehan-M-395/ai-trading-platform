@@ -6,7 +6,7 @@ import {
   type AngelHistoricalRequest,
   type AngelInterval,
 } from "../services/angelHistoricalService.js";
-import { mapAngelCandleToRow, upsertCandles } from "../services/candleStore.js";
+import { mapAngelCandleToRow, listActiveStocks, upsertCandles } from "../services/candleStore.js";
 
 const router = express.Router();
 
@@ -33,8 +33,18 @@ router.post(
         todate,
       });
 
+      const matchingStock = (await listActiveStocks()).find(
+        (stock) => stock.exchange === exchange && stock.symbol_token === symboltoken,
+      );
+
+      if (!matchingStock) {
+        return res.status(404).json({
+          error: "Stock not found in public.stocks. Insert the stock first.",
+        });
+      }
+
       const rows = candles.map((candle) =>
-        mapAngelCandleToRow(exchange as AngelExchange, symboltoken, interval as AngelInterval, candle),
+        mapAngelCandleToRow(matchingStock.id, interval as AngelInterval, candle),
       );
 
       const inserted = await upsertCandles(rows);

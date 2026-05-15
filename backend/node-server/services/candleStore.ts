@@ -1,9 +1,17 @@
 import { supabase } from "../utils/supabase/supaSetup.js";
 import { type AngelExchange, type AngelInterval } from "./angelHistoricalService.js";
 
-export type StoredCandle = {
-  exchange: AngelExchange;
+export type StockRecord = {
+  id: number;
+  exchange: string;
   symbol_token: string;
+  trading_symbol: string;
+  name: string | null;
+  is_active: boolean;
+};
+
+export type StoredCandle = {
+  stock_id: number;
   interval: AngelInterval;
   candle_time: string;
   open: number;
@@ -22,16 +30,14 @@ type GetStoredCandlesParams = {
 };
 
 export function mapAngelCandleToRow(
-  exchange: AngelExchange,
-  symbolToken: string,
+  stockId: number,
   interval: AngelInterval,
   candle: [string, number, number, number, number, number],
 ): StoredCandle {
   const [candleTime, open, high, low, close, volume] = candle;
 
   return {
-    exchange,
-    symbol_token: symbolToken,
+    stock_id: stockId,
     interval,
     candle_time: candleTime,
     open,
@@ -50,7 +56,7 @@ export async function upsertCandles(rows: StoredCandle[]) {
   const { error } = await supabase
     .from("historical_candles")
     .upsert(rows, {
-      onConflict: "exchange,symbol_token,interval,candle_time",
+      onConflict: "stock_id,interval,candle_time",
       ignoreDuplicates: false,
     });
 
@@ -61,6 +67,35 @@ export async function upsertCandles(rows: StoredCandle[]) {
   return rows.length;
 }
 
+export async function listActiveStocks() {
+  const { data, error } = await supabase
+    .from("stocks")
+    .select("id, exchange, symbol_token, trading_symbol, name, is_active")
+    .eq("is_active", true)
+    .order("trading_symbol", { ascending: true });
+
+  if (error) {
+    throw new Error(`Supabase stock fetch failed: ${error.message}`);
+  }
+
+  return (data ?? []) as StockRecord[];
+}
+
+async function getStockByExchangeAndToken(exchange: AngelExchange, symbolToken: string) {
+  const { data, error } = await supabase
+    .from("stocks")
+    .select("id, exchange, symbol_token, trading_symbol, name, is_active")
+    .eq("exchange", exchange)
+    .eq("symbol_token", symbolToken)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Supabase stock lookup failed: ${error.message}`);
+  }
+
+  return data as StockRecord | null;
+}
+
 export async function getStoredCandles({
   exchange,
   symbolToken,
@@ -68,6 +103,15 @@ export async function getStoredCandles({
   start,
   limit,
 }: GetStoredCandlesParams) {
+  const stock = await getStockByExchangeAndToken(exchange, symbolToken);
+
+  if (!stock) {
+    return {
+      rows: [],
+      total: 0,
+    };
+  }
+
   const safeStart = Math.max(0, start);
   const safeLimit = Math.max(1, limit);
   const end = safeStart + safeLimit - 1;
@@ -75,8 +119,7 @@ export async function getStoredCandles({
   const { data, error, count } = await supabase
     .from("historical_candles")
     .select("candle_time, open, high, low, close, volume", { count: "exact" })
-    .eq("exchange", exchange)
-    .eq("symbol_token", symbolToken)
+    .eq("stock_id", stock.id)
     .eq("interval", interval)
     .order("candle_time", { ascending: true })
     .range(safeStart, end);

@@ -3,8 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Bot } from "lucide-react";
-
-import candles from "@/data/candles.json";
 import { MarketCandleChart } from "@/components/chart/market-candle-chart";
 
 type Candle = {
@@ -37,6 +35,10 @@ type AnalysisResult = {
     label: string;
     color: string;
   }>;
+};
+
+type CandleResponse = {
+  data?: Candle[];
 };
 
 const ANALYSIS_CANDLE_WINDOW = 300;
@@ -111,9 +113,14 @@ function analyzeCandles(data: Candle[]): AnalysisResult {
 }
 
 export default function AIAnalysisPage() {
-  const candleData = candles as Candle[];
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
+  const [exchange, setExchange] = useState("NSE");
+  const [symbolToken, setSymbolToken] = useState("");
+  const [symbolLabel, setSymbolLabel] = useState("Selected Stock");
   const trendlineApiUrl =
     process.env.NEXT_PUBLIC_TRENDLINE_API_URL ?? "http://127.0.0.1:5001";
+  const [candleData, setCandleData] = useState<Candle[]>([]);
+  const [loadingCandles, setLoadingCandles] = useState(true);
   const analysisWindow = useMemo(
     () => candleData.slice(-ANALYSIS_CANDLE_WINDOW),
     [candleData],
@@ -124,7 +131,60 @@ export default function AIAnalysisPage() {
   const [apiMessage, setApiMessage] = useState("Waiting for analysis...");
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setExchange(params.get("exchange") ?? "NSE");
+    setSymbolToken(params.get("symboltoken") ?? "");
+    setSymbolLabel(params.get("symbol") ?? "Selected Stock");
+  }, []);
+
+  useEffect(() => {
+    if (!symbolToken) {
+      setLoadingCandles(false);
+      setApiStatus("error");
+      setApiMessage("Missing symbol selection for AI analysis.");
+      return;
+    }
+
+    setLoadingCandles(true);
+
+    (async () => {
+      try {
+        const metaResponse = await fetch(
+          `${apiUrl}/api/charts/candles?exchange=${exchange}&symboltoken=${symbolToken}&interval=ONE_MINUTE&start=0&limit=1`,
+        );
+        if (!metaResponse.ok) {
+          throw new Error("Failed to fetch candle metadata");
+        }
+
+        const metaJson = (await metaResponse.json()) as { total?: number };
+        const total = metaJson.total ?? 0;
+        const start = Math.max(0, total - ANALYSIS_CANDLE_WINDOW);
+
+        const candleResponse = await fetch(
+          `${apiUrl}/api/charts/candles?exchange=${exchange}&symboltoken=${symbolToken}&interval=ONE_MINUTE&start=${start}&limit=${ANALYSIS_CANDLE_WINDOW}`,
+        );
+        if (!candleResponse.ok) {
+          throw new Error("Failed to fetch candles for AI analysis");
+        }
+
+        const candleJson = (await candleResponse.json()) as CandleResponse;
+        setCandleData(candleJson.data ?? []);
+      } catch (error) {
+        setApiStatus("error");
+        setApiMessage(error instanceof Error ? error.message : "Failed to load analysis candles");
+        setCandleData([]);
+      } finally {
+        setLoadingCandles(false);
+      }
+    })();
+  }, [apiUrl, exchange, symbolToken]);
+
+  useEffect(() => {
     let cancelled = false;
+
+    if (!analysisWindow.length) {
+      return;
+    }
 
     async function fetchTrendlineFromAI() {
       setApiStatus("loading");
@@ -212,7 +272,7 @@ export default function AIAnalysisPage() {
             </Link>
             <div>
               <p className="text-xs uppercase tracking-[0.26em] text-slate-500">AI Workspace</p>
-              <h1 className="mt-1 font-display text-2xl font-semibold">RELIANCE AI Analysis</h1>
+              <h1 className="mt-1 font-display text-2xl font-semibold">{symbolLabel} AI Analysis</h1>
             </div>
           </div>
           <div className="rounded-xl border border-fuchsia-400/20 bg-fuchsia-400/10 px-3 py-2 text-xs text-fuchsia-200">
@@ -245,8 +305,8 @@ export default function AIAnalysisPage() {
               </p>
             </div>
             <div className="mt-6 rounded-xl border border-white/10 bg-slate-950/60 p-3 text-xs leading-6 text-slate-400">
-              Trendlines and support/resistance overlays are auto-generated from the same JSON
-              candles used by the chart and can later be swapped to backend AI responses.
+              Trendlines and support/resistance overlays are generated from the candles loaded from
+              the database-backed chart API for the selected stock.
             </div>
             <div
               className={`mt-3 rounded-xl border p-3 text-xs ${
@@ -259,6 +319,9 @@ export default function AIAnalysisPage() {
             >
               {apiMessage}
             </div>
+            {loadingCandles ? (
+              <p className="mt-2 text-[11px] text-slate-500">Loading candles from database...</p>
+            ) : null}
             <p className="mt-2 text-[11px] text-slate-500">
               AI input window: last {ANALYSIS_CANDLE_WINDOW} candles.
             </p>

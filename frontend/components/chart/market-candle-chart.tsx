@@ -57,6 +57,15 @@ function toUtcTimestamp(candle: Candle): UTCTimestamp {
   return Math.floor(ms / 1000) as UTCTimestamp;
 }
 
+function formatAiAxisTime(time: UTCTimestamp) {
+  return new Intl.DateTimeFormat("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "Asia/Kolkata",
+  }).format(new Date(Number(time) * 1000));
+}
+
 export function MarketCandleChart({
   data,
   mode = "manual",
@@ -92,6 +101,17 @@ export function MarketCandleChart({
         textColor: "#94a3b8",
         attributionLogo: false,
       },
+      localization: {
+        timeFormatter: (time: number) =>
+          new Intl.DateTimeFormat("en-IN", {
+            day: "2-digit",
+            month: "short",
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+            timeZone: "Asia/Kolkata",
+          }).format(new Date(Number(time) * 1000)),
+      },
       grid: {
         vertLines: { color: "rgba(148,163,184,0.08)" },
         horzLines: { color: "rgba(148,163,184,0.08)" },
@@ -101,6 +121,7 @@ export function MarketCandleChart({
         borderColor: "rgba(148,163,184,0.14)",
         timeVisible: true,
         secondsVisible: false,
+        tickMarkFormatter: (time: number) => formatAiAxisTime(time as UTCTimestamp),
       },
       // AI mode is read-only: no drawing/click tools attached.
       handleScroll: true,
