@@ -58,19 +58,20 @@ type ChartPoint = {
   volume: number;
 };
 
+type ChartTf = "1m" | "5m" | "15m" | "30m" | "1h" | "1d";
+
 type IntervalOption = {
   label: string;
-  groupBy: number | "day";
+  tf: ChartTf;
 };
 
 const intervalOptions: IntervalOption[] = [
-  { label: "1m", groupBy: 1 },
-  { label: "5m", groupBy: 5 },
-  { label: "10m", groupBy: 10 },
-  { label: "15m", groupBy: 15 },
-  { label: "30m", groupBy: 30 },
-  { label: "1H", groupBy: 60 },
-  { label: "1D", groupBy: "day" },
+  { label: "1m", tf: "1m" },
+  { label: "5m", tf: "5m" },
+  { label: "15m", tf: "15m" },
+  { label: "30m", tf: "30m" },
+  { label: "1H", tf: "1h" },
+  { label: "1D", tf: "1d" },
 ];
 
 const sidebarTools = [
@@ -144,18 +145,53 @@ function buildFallbackVolume(point: CandleData, index: number) {
 function toChartTimestamp(point: CandleData): UTCTimestamp {
   const timestampMs = point.date
     ? new Date(point.date).getTime()
-    : point.time * 1000;
+    : Number(point.time) * 1000;
 
   return Math.floor(timestampMs / 1000) as UTCTimestamp;
 }
 
-function isMarketHour(timestamp: number): boolean {
-  const date = new Date(timestamp * 1000);
-  const utcMinutes = date.getUTCHours() * 60 + date.getUTCMinutes();
-  const marketOpenUtcMinutes = 3 * 60 + 45;
-  const marketCloseUtcMinutes = 10 * 60;
+function buildCandlesUrl(
+  apiUrl: string,
+  stockId: number,
+  tf: ChartTf,
+  opts: { start?: number; limit?: number },
+) {
+  const params = new URLSearchParams();
+  params.set("stockId", String(stockId));
+  params.set("tf", tf);
+  if (opts.start !== undefined) {
+    params.set("start", String(opts.start));
+  }
+  if (opts.limit !== undefined) {
+    params.set("limit", String(opts.limit));
+  }
+  return `${apiUrl}/api/candles?${params.toString()}`;
+}
 
-  return utcMinutes >= marketOpenUtcMinutes && utcMinutes <= marketCloseUtcMinutes;
+async function fetchCandlesJson(url: string, label: string): Promise<CandleResponse> {
+  console.log(`[chart] ${label} → GET`, url);
+  const res = await fetch(url);
+  const text = await res.text();
+  let json: CandleResponse & { error?: string };
+  try {
+    json = text ? (JSON.parse(text) as CandleResponse & { error?: string }) : {};
+  } catch {
+    console.error(`[chart] ${label} invalid JSON`, { status: res.status, bodyPreview: text.slice(0, 500) });
+    throw new Error(`${label}: invalid response (${res.status})`);
+  }
+  console.log(`[chart] ${label} ←`, {
+    status: res.status,
+    ok: res.ok,
+    total: json.total,
+    dataLength: json.data?.length ?? 0,
+    nextStart: json.nextStart,
+    hasMore: json.hasMore,
+    error: json.error,
+  });
+  if (!res.ok) {
+    throw new Error(json.error ?? `${label} failed (${res.status})`);
+  }
+  return json;
 }
 
 function isSameUtcSession(left: UTCTimestamp, right: UTCTimestamp): boolean {
@@ -214,56 +250,6 @@ function formatChartAxisTime(time: UTCTimestamp) {
   }).format(new Date(Number(time) * 1000));
 }
 
-function aggregateChunk(points: ChartPoint[]) {
-  const first = points[0];
-  const last = points[points.length - 1];
-
-  return {
-    time: first.time,
-    open: first.open,
-    high: Math.max(...points.map((point) => point.high)),
-    low: Math.min(...points.map((point) => point.low)),
-    close: last.close,
-    volume: points.reduce((sum, point) => sum + point.volume, 0),
-  } satisfies ChartPoint;
-}
-
-function aggregateChartData(data: ChartPoint[], groupBy: IntervalOption["groupBy"]) {
-  if (groupBy === 1) {
-    return data;
-  }
-
-  if (groupBy === "day") {
-    const buckets = new Map<string, ChartPoint[]>();
-
-    for (const point of data) {
-      const date = new Date(Number(point.time) * 1000);
-      const key = `${date.getUTCFullYear()}-${date.getUTCMonth()}-${date.getUTCDate()}`;
-      const bucket = buckets.get(key);
-
-      if (bucket) {
-        bucket.push(point);
-      } else {
-        buckets.set(key, [point]);
-      }
-    }
-
-    return Array.from(buckets.values()).map(aggregateChunk);
-  }
-
-  const aggregated: ChartPoint[] = [];
-
-  for (let index = 0; index < data.length; index += groupBy) {
-    const chunk = data.slice(index, index + groupBy);
-
-    if (chunk.length) {
-      aggregated.push(aggregateChunk(chunk));
-    }
-  }
-
-  return aggregated;
-}
-
 export default function MarketsPage() {
   const router = useRouter();
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
@@ -287,7 +273,6 @@ export default function MarketsPage() {
   const [stockLoading, setStockLoading] = useState(true);
   const [selectedStockToken, setSelectedStockToken] = useState<string>("");
   const [searchTerm, setSearchTerm] = useState("");
-  const [rawChartData, setRawChartData] = useState<ChartPoint[]>([]);
   const [chartData, setChartData] = useState<ChartPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -300,7 +285,7 @@ export default function MarketsPage() {
   const [isSelectingReplay, setIsSelectingReplay] = useState(false);
   const [hoveredTime, setHoveredTime] = useState<UTCTimestamp | null>(null);
   const [chartReady, setChartReady] = useState(false);
-  const lastFittedSymbolRef = useRef<string>("");
+  const lastFitKeyRef = useRef<string>("");
 
   const selectedStock = useMemo(
     () => stocks.find((stock) => stock.symbol_token === selectedStockToken) ?? null,
@@ -310,7 +295,7 @@ export default function MarketsPage() {
   const handleAIAnalysis = useCallback(() => {
     if (!selectedStock) return;
     router.push(
-      `/dashboard/markets/ai-analysis?exchange=${selectedStock.exchange}&symboltoken=${selectedStock.symbol_token}&symbol=${encodeURIComponent(selectedStock.trading_symbol)}`,
+      `/dashboard/markets/ai-analysis?exchange=${selectedStock.exchange}&symboltoken=${selectedStock.symbol_token}&symbol=${encodeURIComponent(selectedStock.trading_symbol)}&stockId=${selectedStock.id}`,
     );
   }, [router, selectedStock]);
 
@@ -343,7 +328,6 @@ export default function MarketsPage() {
   }, [stop]);
 
   useEffect(() => {
-    setRawChartData([]);
     setChartData([]);
     setHoveredPoint(null);
     setHoveredTime(null);
@@ -356,9 +340,9 @@ export default function MarketsPage() {
       nextStart: 0,
     };
     hasFittedRef.current = false;
-    lastFittedSymbolRef.current = "";
+    lastFitKeyRef.current = "";
     stopReplayRef.current();
-  }, [selectedStock?.symbol_token]);
+  }, [selectedStock?.symbol_token, selectedInterval.tf]);
 
   // If replay advances and the hovered candle is no longer in the visible slice,
   // clear the hover overlay to avoid showing stale OHLC values.
@@ -384,20 +368,20 @@ export default function MarketsPage() {
   });
 
   const mapToChartPoints = useCallback((raw: CandleData[]) => {
-    return raw
-      .map((point, index) => {
-        const timestamp = toChartTimestamp(point);
+    const mapped = raw.map((point, index) => {
+      const timestamp = toChartTimestamp(point);
 
-        return {
-          time: timestamp,
-          open: point.open,
-          high: point.high,
-          low: point.low,
-          close: point.close,
-          volume: point.volume ?? buildFallbackVolume(point, index),
-        } satisfies ChartPoint;
-      })
-      .filter((point) => isMarketHour(point.time));
+      return {
+        time: timestamp,
+        open: point.open,
+        high: point.high,
+        low: point.low,
+        close: point.close,
+        volume: point.volume ?? buildFallbackVolume(point, index),
+      } satisfies ChartPoint;
+    });
+    mapped.sort((a, b) => a.time - b.time);
+    return mapped;
   }, []);
 
   const loadPreviousData = useCallback(async () => {
@@ -413,11 +397,11 @@ export default function MarketsPage() {
     loadedStartsRef.current.add(nextStart);
 
     try {
-      const res = await fetch(
-        `${apiUrl}/api/charts/candles?exchange=${selectedStock.exchange}&symboltoken=${selectedStock.symbol_token}&interval=ONE_MINUTE&start=${nextStart}&limit=${PAGE_LIMIT}&backward=1`,
-      );
-      if (!res.ok) throw new Error("Failed to fetch previous candle data");
-      const json = (await res.json()) as CandleResponse;
+      const url = buildCandlesUrl(apiUrl, selectedStock.id, selectedInterval.tf, {
+        start: nextStart,
+        limit: PAGE_LIMIT,
+      });
+      const json = await fetchCandlesJson(url, "loadPrevious");
       const olderRaw = json.data ?? [];
 
       if (!olderRaw.length) {
@@ -427,12 +411,9 @@ export default function MarketsPage() {
 
       const olderPoints = mapToChartPoints(olderRaw);
       const currentRange = chart.timeScale().getVisibleLogicalRange();
-      const shift =
-        typeof selectedInterval.groupBy === "number"
-          ? Math.max(1, Math.round(olderPoints.length / selectedInterval.groupBy))
-          : olderPoints.length;
+      const shift = olderPoints.length;
 
-      setRawChartData((previous) => {
+      setChartData((previous) => {
         const existingTimes = new Set(previous.map((point) => point.time));
         const uniqueOlder = olderPoints.filter((point) => !existingTimes.has(point.time));
         return uniqueOlder.length ? [...uniqueOlder, ...previous] : previous;
@@ -452,12 +433,18 @@ export default function MarketsPage() {
         });
       }
     } catch (err: unknown) {
+      console.error("[chart] loadPrevious failed", {
+        stockId: selectedStock.id,
+        tf: selectedInterval.tf,
+        nextStart,
+        err,
+      });
       loadedStartsRef.current.delete(nextStart);
       setError(err instanceof Error ? err.message : "Failed to load previous candles");
     } finally {
       paginationRef.current.isLoading = false;
     }
-  }, [apiUrl, isReplay, mapToChartPoints, selectedInterval.groupBy, selectedStock]);
+  }, [apiUrl, isReplay, mapToChartPoints, selectedInterval.tf, selectedStock]);
 
   useEffect(() => {
     const currentUser = getStoredUser();
@@ -661,32 +648,55 @@ export default function MarketsPage() {
 
     (async () => {
       try {
-        const metaRes = await fetch(
-          `${apiUrl}/api/charts/candles?exchange=${selectedStock.exchange}&symboltoken=${selectedStock.symbol_token}&interval=ONE_MINUTE&start=0&limit=1`,
-        );
-        if (!metaRes.ok) throw new Error("Failed to fetch chart data");
-        const metaJson = (await metaRes.json()) as CandleResponse;
+        console.log("[chart] initial load", {
+          apiUrl,
+          stockId: selectedStock.id,
+          symbol: selectedStock.trading_symbol,
+          tf: selectedInterval.tf,
+        });
+
+        const metaUrl = buildCandlesUrl(apiUrl, selectedStock.id, selectedInterval.tf, {
+          start: 0,
+          limit: 1,
+        });
+        const metaJson = await fetchCandlesJson(metaUrl, "meta");
         const total = metaJson.total ?? 0;
-        if (!total) throw new Error("No market data received");
+        if (!total) {
+          console.warn("[chart] meta ok but total=0", { stockId: selectedStock.id, tf: selectedInterval.tf });
+          throw new Error("No market data received (total=0)");
+        }
 
         const start = Math.max(0, total - INITIAL_LIMIT);
-        const dataRes = await fetch(
-          `${apiUrl}/api/charts/candles?exchange=${selectedStock.exchange}&symboltoken=${selectedStock.symbol_token}&interval=ONE_MINUTE&start=${start}&limit=${INITIAL_LIMIT}&backward=1`,
-        );
-        if (!dataRes.ok) throw new Error("Failed to fetch initial candles");
-        const dataJson = (await dataRes.json()) as CandleResponse;
+        const dataUrl = buildCandlesUrl(apiUrl, selectedStock.id, selectedInterval.tf, {
+          start,
+          limit: INITIAL_LIMIT,
+        });
+        const dataJson = await fetchCandlesJson(dataUrl, "initial");
         const raw = dataJson.data ?? [];
-        if (!raw.length) throw new Error("No market data received");
+        if (!raw.length) {
+          console.warn("[chart] initial ok but empty data", { start, total });
+          throw new Error("No market data received (empty data array)");
+        }
         if (cancelled) return;
 
-        setRawChartData(mapToChartPoints(raw));
+        console.log("[chart] initial load success", {
+          points: raw.length,
+          firstTime: raw[0]?.time,
+          lastTime: raw[raw.length - 1]?.time,
+        });
+        setChartData(mapToChartPoints(raw));
         paginationRef.current.nextStart = dataJson.nextStart ?? start;
         paginationRef.current.hasMore = Boolean(dataJson.hasMore);
         loadedStartsRef.current.add(start);
       } catch (err: unknown) {
         if (cancelled) return;
+        console.error("[chart] initial load failed", {
+          stockId: selectedStock.id,
+          tf: selectedInterval.tf,
+          err,
+        });
         setError(err instanceof Error ? err.message : "Failed to load data");
-        setRawChartData([]);
+        setChartData([]);
       } finally {
         if (cancelled) return;
         setLoading(false);
@@ -696,7 +706,7 @@ export default function MarketsPage() {
     return () => {
       cancelled = true;
     };
-  }, [apiUrl, hydrated, mapToChartPoints, selectedStock]);
+  }, [apiUrl, hydrated, mapToChartPoints, selectedInterval.tf, selectedStock]);
 
   useEffect(() => {
     const chart = chartApiRef.current;
@@ -767,10 +777,6 @@ export default function MarketsPage() {
   }, [chartReady, play, setReplayIndex]);
 
   useEffect(() => {
-    setChartData(aggregateChartData(rawChartData, selectedInterval.groupBy));
-  }, [rawChartData, selectedInterval]);
-
-  useEffect(() => {
     const chart = chartApiRef.current;
     const candles = candleSeriesRef.current;
     const volume = volumeSeriesRef.current;
@@ -803,14 +809,13 @@ export default function MarketsPage() {
     area.setData(areaData);
     area.applyOptions({ visible: showArea });
 
-    if (
-      selectedStock &&
-      visibleData.length > 0 &&
-      lastFittedSymbolRef.current !== selectedStock.symbol_token
-    ) {
+    const fitKey =
+      selectedStock != null ? `${selectedStock.symbol_token}:${selectedInterval.tf}` : "";
+
+    if (selectedStock && visibleData.length > 0 && lastFitKeyRef.current !== fitKey) {
       chart.timeScale().fitContent();
       hasFittedRef.current = true;
-      lastFittedSymbolRef.current = selectedStock.symbol_token;
+      lastFitKeyRef.current = fitKey;
       return;
     }
 
@@ -818,7 +823,7 @@ export default function MarketsPage() {
       chart.timeScale().fitContent();
       hasFittedRef.current = true;
     }
-  }, [selectedStock, visibleData, showArea, showEma, showSma, showVolume]);
+  }, [selectedStock, selectedInterval.tf, visibleData, showArea, showEma, showSma, showVolume]);
 
   const marketSnapshot = useMemo(() => {
     const latest = visibleData[visibleData.length - 1];
@@ -973,7 +978,7 @@ export default function MarketsPage() {
               <div className="flex flex-wrap gap-2">
                 {intervalOptions.map((option) => (
                   <button
-                    key={option.label}
+                    key={option.tf}
                     className={cn(
                       "rounded-xl border px-3 py-2 text-xs font-semibold uppercase tracking-[0.24em] transition disabled:cursor-not-allowed disabled:opacity-40",
                       selectedInterval.label === option.label

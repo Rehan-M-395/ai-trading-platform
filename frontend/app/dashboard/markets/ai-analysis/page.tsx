@@ -37,14 +37,37 @@ type AnalysisResult = {
   }>;
 };
 
+type StockListRow = {
+  id: number;
+  exchange: string;
+  symbol_token: string;
+};
+
 type CandleResponse = {
   data?: Candle[];
 };
 
 const ANALYSIS_CANDLE_WINDOW = 300;
 
+function buildCandlesUrl(
+  base: string,
+  stockId: number,
+  opts: { start?: number; limit?: number },
+) {
+  const params = new URLSearchParams();
+  params.set("stockId", String(stockId));
+  params.set("tf", "1m");
+  if (opts.start !== undefined) {
+    params.set("start", String(opts.start));
+  }
+  if (opts.limit !== undefined) {
+    params.set("limit", String(opts.limit));
+  }
+  return `${base}/api/candles?${params.toString()}`;
+}
+
 function toUtcTimestamp(candle: Candle): number {
-  const ms = candle.date ? new Date(candle.date).getTime() : (candle.time ?? 0) * 1000;
+  const ms = candle.date ? new Date(candle.date).getTime() : Number(candle.time ?? 0) * 1000;
   return Math.floor(ms / 1000);
 }
 
@@ -117,6 +140,7 @@ export default function AIAnalysisPage() {
   const [exchange, setExchange] = useState("NSE");
   const [symbolToken, setSymbolToken] = useState("");
   const [symbolLabel, setSymbolLabel] = useState("Selected Stock");
+  const [stockIdParam, setStockIdParam] = useState("");
   const trendlineApiUrl =
     process.env.NEXT_PUBLIC_TRENDLINE_API_URL ?? "http://127.0.0.1:5001";
   const [candleData, setCandleData] = useState<Candle[]>([]);
@@ -135,6 +159,7 @@ export default function AIAnalysisPage() {
     setExchange(params.get("exchange") ?? "NSE");
     setSymbolToken(params.get("symboltoken") ?? "");
     setSymbolLabel(params.get("symbol") ?? "Selected Stock");
+    setStockIdParam(params.get("stockId") ?? "");
   }, []);
 
   useEffect(() => {
@@ -149,8 +174,24 @@ export default function AIAnalysisPage() {
 
     (async () => {
       try {
+        let stockId = Number.parseInt(stockIdParam, 10);
+        if (!Number.isFinite(stockId) || stockId < 1) {
+          const stocksRes = await fetch(`${apiUrl}/api/stocks`);
+          if (!stocksRes.ok) {
+            throw new Error("Failed to resolve stock id");
+          }
+          const stocksJson = (await stocksRes.json()) as { data?: StockListRow[] };
+          const match = (stocksJson.data ?? []).find(
+            (s) => s.symbol_token === symbolToken && s.exchange === exchange,
+          );
+          if (!match) {
+            throw new Error("Stock not found; open AI analysis from Markets or add stockId to URL.");
+          }
+          stockId = match.id;
+        }
+
         const metaResponse = await fetch(
-          `${apiUrl}/api/charts/candles?exchange=${exchange}&symboltoken=${symbolToken}&interval=ONE_MINUTE&start=0&limit=1`,
+          buildCandlesUrl(apiUrl, stockId, { start: 0, limit: 1 }),
         );
         if (!metaResponse.ok) {
           throw new Error("Failed to fetch candle metadata");
@@ -161,7 +202,10 @@ export default function AIAnalysisPage() {
         const start = Math.max(0, total - ANALYSIS_CANDLE_WINDOW);
 
         const candleResponse = await fetch(
-          `${apiUrl}/api/charts/candles?exchange=${exchange}&symboltoken=${symbolToken}&interval=ONE_MINUTE&start=${start}&limit=${ANALYSIS_CANDLE_WINDOW}`,
+          buildCandlesUrl(apiUrl, stockId, {
+            start,
+            limit: ANALYSIS_CANDLE_WINDOW,
+          }),
         );
         if (!candleResponse.ok) {
           throw new Error("Failed to fetch candles for AI analysis");
@@ -177,7 +221,7 @@ export default function AIAnalysisPage() {
         setLoadingCandles(false);
       }
     })();
-  }, [apiUrl, exchange, symbolToken]);
+  }, [apiUrl, exchange, symbolToken, stockIdParam]);
 
   useEffect(() => {
     let cancelled = false;

@@ -31,18 +31,19 @@ type CandleInsertRow = {
   volume: number;
 };
 
+type FetchStats = {
+  fetched: number;
+  inserted: number;
+  skippedExisting: number;
+  noDataDays: string[];
+};
+
 const INTERVAL: AngelInterval = "ONE_MINUTE";
 const MAX_DAYS_PER_REQUEST = 30;
-
-function formatAngelDate(date: Date) {
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-  const hours = `${date.getHours()}`.padStart(2, "0");
-  const minutes = `${date.getMinutes()}`.padStart(2, "0");
-
-  return `${year}-${month}-${day} ${hours}:${minutes}`;
-}
+const IST_TIMEZONE = "Asia/Kolkata";
+const MARKET_OPEN = "09:15";
+const MARKET_CLOSE = "15:30";
+const EXISTING_TIMES_CHUNK = 200;
 
 function addDays(date: Date, days: number) {
   const copy = new Date(date);
@@ -50,21 +51,80 @@ function addDays(date: Date, days: number) {
   return copy;
 }
 
-function buildDateWindows(totalDays: number, maxDaysPerRequest: number) {
-  const windows: Array<{ fromdate: string; todate: string }> = [];
-  const now = new Date();
-  let windowStart = addDays(now, -totalDays);
+function toIstDateKey(date: Date) {
+  return date.toLocaleDateString("en-CA", { timeZone: IST_TIMEZONE });
+}
 
-  while (windowStart < now) {
-    const tentativeEnd = addDays(windowStart, maxDaysPerRequest);
-    const windowEnd = tentativeEnd < now ? tentativeEnd : now;
+function candleTimeToIstDateKey(candleTime: string) {
+  return new Date(candleTime).toLocaleDateString("en-CA", { timeZone: IST_TIMEZONE });
+}
 
-    windows.push({
-      fromdate: formatAngelDate(windowStart),
-      todate: formatAngelDate(windowEnd),
-    });
+function isWeekendIst(dateKey: string) {
+  const noonIst = new Date(`${dateKey}T12:00:00+05:30`);
+  const day = noonIst.getUTCDay();
+  return day === 0 || day === 6;
+}
 
-    windowStart = windowEnd;
+function listWeekdayDateKeys(from: Date, to: Date) {
+  const keys: string[] = [];
+  let cursor = new Date(from);
+
+  while (cursor <= to) {
+    const key = toIstDateKey(cursor);
+    if (!isWeekendIst(key)) {
+      keys.push(key);
+    }
+    cursor = addDays(cursor, 1);
+  }
+
+  return keys;
+}
+
+function groupConsecutiveDateKeys(dateKeys: string[]) {
+  if (!dateKeys.length) {
+    return [] as string[][];
+  }
+
+  const sorted = [...dateKeys].sort();
+  const groups: string[][] = [[sorted[0]]];
+
+  for (let i = 1; i < sorted.length; i += 1) {
+    const previous = new Date(`${sorted[i - 1]}T12:00:00+05:30`);
+    const current = new Date(`${sorted[i]}T12:00:00+05:30`);
+    const dayDiff = Math.round(
+      (current.getTime() - previous.getTime()) / (24 * 60 * 60 * 1000),
+    );
+
+    if (dayDiff === 1) {
+      groups[groups.length - 1].push(sorted[i]);
+    } else {
+      groups.push([sorted[i]]);
+    }
+  }
+
+  return groups;
+}
+
+function buildWindowsForMissingDays(missingDateKeys: string[]) {
+  const groups = groupConsecutiveDateKeys(missingDateKeys);
+  const windows: Array<{ fromdate: string; todate: string; dateKeys: string[] }> = [];
+
+  for (const group of groups) {
+    let chunkStart = 0;
+
+    while (chunkStart < group.length) {
+      const chunk = group.slice(chunkStart, chunkStart + MAX_DAYS_PER_REQUEST);
+      const first = chunk[0];
+      const last = chunk[chunk.length - 1];
+
+      windows.push({
+        fromdate: `${first} ${MARKET_OPEN}`,
+        todate: `${last} ${MARKET_CLOSE}`,
+        dateKeys: chunk,
+      });
+
+      chunkStart += MAX_DAYS_PER_REQUEST;
+    }
   }
 
   return windows;
@@ -103,32 +163,128 @@ function mapAngelCandleToInsertRow(
   };
 }
 
-async function upsertCandles(rows: CandleInsertRow[]) {
+async function getCoveredIstDateKeys(stockId: number, from: Date, to: Date) {
+  const covered = new Set<string>();
+  const pageSize = 1000;
+  let offset = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from("historical_candles")
+      .select("candle_time")
+      .eq("stock_id", stockId)
+      .eq("interval", INTERVAL)
+      .gte("candle_time", from.toISOString())
+      .lte("candle_time", to.toISOString())
+      .order("candle_time", { ascending: true })
+      .range(offset, offset + pageSize - 1);
+
+    if (error) {
+      throw new Error(`Supabase candle lookup failed: ${error.message}`);
+    }
+
+    const rows = data ?? [];
+    if (!rows.length) {
+      break;
+    }
+
+    for (const row of rows) {
+      covered.add(candleTimeToIstDateKey(row.candle_time));
+    }
+
+    if (rows.length < pageSize) {
+      break;
+    }
+
+    offset += pageSize;
+  }
+
+  return covered;
+}
+
+async function filterRowsNotInDatabase(stockId: number, rows: CandleInsertRow[]) {
+  if (!rows.length) {
+    return { newRows: [], skippedExisting: 0 };
+  }
+
+  const existingTimes = new Set<string>();
+
+  for (let i = 0; i < rows.length; i += EXISTING_TIMES_CHUNK) {
+    const chunk = rows.slice(i, i + EXISTING_TIMES_CHUNK);
+    const candleTimes = chunk.map((row) => row.candle_time);
+
+    const { data, error } = await supabase
+      .from("historical_candles")
+      .select("candle_time")
+      .eq("stock_id", stockId)
+      .eq("interval", INTERVAL)
+      .in("candle_time", candleTimes);
+
+    if (error) {
+      throw new Error(`Supabase duplicate check failed: ${error.message}`);
+    }
+
+    for (const row of data ?? []) {
+      existingTimes.add(row.candle_time);
+    }
+  }
+
+  const newRows = rows.filter((row) => !existingTimes.has(row.candle_time));
+
+  return {
+    newRows,
+    skippedExisting: rows.length - newRows.length,
+  };
+}
+
+async function insertCandles(rows: CandleInsertRow[]) {
   if (!rows.length) {
     return 0;
   }
 
-  const { error } = await supabase
-    .from("historical_candles")
-    .upsert(rows, {
-      onConflict: "stock_id,interval,candle_time",
-      ignoreDuplicates: false,
-    });
+  const { error } = await supabase.from("historical_candles").insert(rows);
 
   if (error) {
-    throw new Error(`Supabase candle upsert failed: ${error.message}`);
+    throw new Error(`Supabase candle insert failed: ${error.message}`);
   }
 
   return rows.length;
 }
 
 async function fetchAndStoreStock(stock: StockRow, totalDays: number) {
-  const windows = buildDateWindows(totalDays, MAX_DAYS_PER_REQUEST);
-  let inserted = 0;
+  const now = new Date();
+  const rangeStart = addDays(now, -totalDays);
+  const weekdayKeys = listWeekdayDateKeys(rangeStart, now);
+  const coveredDateKeys = await getCoveredIstDateKeys(stock.id, rangeStart, now);
+  const missingDateKeys = weekdayKeys.filter((key) => !coveredDateKeys.has(key));
+
+  const stats: FetchStats = {
+    fetched: 0,
+    inserted: 0,
+    skippedExisting: 0,
+    noDataDays: [],
+  };
 
   console.log(
     `\n${stock.trading_symbol} -> token ${stock.symbol_token} -> stock_id ${stock.id}`,
   );
+  console.log(
+    `Last ${totalDays} day(s): ${weekdayKeys.length} weekday(s), ${coveredDateKeys.size} already in DB, ${missingDateKeys.length} to fetch`,
+  );
+
+  if (!missingDateKeys.length) {
+    console.log("All weekday data already present. Skipping API calls.");
+    return {
+      stockId: stock.id,
+      tradingSymbol: stock.trading_symbol,
+      symbolToken: stock.symbol_token,
+      ...stats,
+    };
+  }
+
+  console.log(`Missing dates: ${missingDateKeys.join(", ")}`);
+
+  const windows = buildWindowsForMissingDays(missingDateKeys);
 
   for (const window of windows) {
     const request: AngelHistoricalRequest = {
@@ -142,20 +298,35 @@ async function fetchAndStoreStock(stock: StockRow, totalDays: number) {
     console.log(`Fetching ${request.fromdate} -> ${request.todate}`);
 
     const candles = await fetchAngelHistoricalCandles(request);
+    stats.fetched += candles.length;
+
     const rows = candles.map((candle) =>
       mapAngelCandleToInsertRow(stock.id, INTERVAL, candle),
     );
-    const upserted = await upsertCandles(rows);
+    const { newRows, skippedExisting } = await filterRowsNotInDatabase(stock.id, rows);
+    stats.skippedExisting += skippedExisting;
 
-    inserted += upserted;
-    console.log(`Fetched ${candles.length}, upserted ${upserted}`);
+    const inserted = await insertCandles(newRows);
+    stats.inserted += inserted;
+
+    const returnedDateKeys = new Set(rows.map((row) => candleTimeToIstDateKey(row.candle_time)));
+    for (const dateKey of window.dateKeys) {
+      if (!returnedDateKeys.has(dateKey)) {
+        stats.noDataDays.push(dateKey);
+        console.log(`No candles for ${dateKey} (weekend/holiday or market closed)`);
+      }
+    }
+
+    console.log(
+      `Fetched ${candles.length}, inserted ${inserted}, skipped existing ${skippedExisting}`,
+    );
   }
 
   return {
     stockId: stock.id,
     tradingSymbol: stock.trading_symbol,
     symbolToken: stock.symbol_token,
-    inserted,
+    ...stats,
   };
 }
 
@@ -173,6 +344,9 @@ async function main() {
   console.log(
     `Backfilling ${INTERVAL} candles for last ${totalDays} days for ${stocks.length} stock(s) from public.stocks`,
   );
+  console.log(
+    "Only missing weekdays are fetched. Weekends are skipped. Rows already in DB are not inserted again.",
+  );
 
   for (const stock of stocks) {
     const result = await fetchAndStoreStock(stock, totalDays);
@@ -181,8 +355,13 @@ async function main() {
 
   console.log("\nSummary");
   for (const result of results) {
+    const holidayNote =
+      result.noDataDays.length > 0
+        ? ` | no API data: ${[...new Set(result.noDataDays)].join(", ")}`
+        : "";
+
     console.log(
-      `${result.tradingSymbol} (${result.symbolToken}) -> stock_id ${result.stockId} -> ${result.inserted} rows processed`,
+      `${result.tradingSymbol} (${result.symbolToken}) -> stock_id ${result.stockId} -> fetched ${result.fetched}, inserted ${result.inserted}, skipped existing ${result.skippedExisting}${holidayNote}`,
     );
   }
 }
