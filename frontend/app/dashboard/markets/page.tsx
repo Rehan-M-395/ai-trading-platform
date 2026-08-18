@@ -251,7 +251,6 @@ function formatChartAxisTime(time: UTCTimestamp) {
 }
 
 export default function MarketsPage() {
-  const router = useRouter();
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
 
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -291,13 +290,6 @@ export default function MarketsPage() {
     () => stocks.find((stock) => stock.symbol_token === selectedStockToken) ?? null,
     [selectedStockToken, stocks],
   );
-
-  const handleAIAnalysis = useCallback(() => {
-    if (!selectedStock) return;
-    router.push(
-      `/dashboard/markets/ai-analysis?exchange=${selectedStock.exchange}&symboltoken=${selectedStock.symbol_token}&symbol=${encodeURIComponent(selectedStock.trading_symbol)}&stockId=${selectedStock.id}`,
-    );
-  }, [router, selectedStock]);
 
   useEffect(() => {
     isSelectingReplayRef.current = isSelectingReplay;
@@ -1002,10 +994,9 @@ export default function MarketsPage() {
               </button>
 
               <button
-                onClick={handleAIAnalysis}
                 type="button"
-                disabled={!selectedStock}
-                className="h-11 rounded-xl border border-sky-400/20 bg-sky-500/10 px-4 text-xs font-semibold uppercase tracking-[0.14em] text-sky-200 transition hover:border-sky-300/40 hover:bg-sky-500/15"
+                disabled={true}
+                className="h-11 rounded-xl border border-sky-400/20 bg-sky-500/10 px-4 text-xs font-semibold uppercase tracking-[0.14em] text-sky-200 transition"
               >
                 AI Analysis
               </button>
