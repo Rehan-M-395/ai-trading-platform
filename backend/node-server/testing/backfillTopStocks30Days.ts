@@ -170,7 +170,7 @@ async function getCoveredIstDateKeys(stockId: number, from: Date, to: Date) {
 
   while (true) {
     const { data, error } = await supabase
-      .from("historical_candles")
+      .from("stock_candles")
       .select("candle_time")
       .eq("stock_id", stockId)
       .eq("interval", INTERVAL)
@@ -214,7 +214,7 @@ async function filterRowsNotInDatabase(stockId: number, rows: CandleInsertRow[])
     const candleTimes = chunk.map((row) => row.candle_time);
 
     const { data, error } = await supabase
-      .from("historical_candles")
+      .from("stock_candles")
       .select("candle_time")
       .eq("stock_id", stockId)
       .eq("interval", INTERVAL)
@@ -242,7 +242,7 @@ async function insertCandles(rows: CandleInsertRow[]) {
     return 0;
   }
 
-  const { error } = await supabase.from("historical_candles").insert(rows);
+  const { error } = await supabase.from("stock_candles").insert(rows);
 
   if (error) {
     throw new Error(`Supabase candle insert failed: ${error.message}`);

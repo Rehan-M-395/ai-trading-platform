@@ -13,7 +13,7 @@ WITH minute_rows AS (
     c.close,
     c.volume,
     ((c.candle_time AT TIME ZONE 'Asia/Kolkata')::date + TIME '09:15:00') AT TIME ZONE 'Asia/Kolkata' AS session_open
-  FROM historical_candles c
+  FROM stock_candles c
   WHERE c.stock_id = $1
     AND c.interval = 'ONE_MINUTE'
     AND ($2::timestamptz IS NULL OR c.candle_time >= $2::timestamptz)

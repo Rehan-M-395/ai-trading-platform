@@ -1,4 +1,4 @@
-create table if not exists public.historical_candles (
+create table if not exists public.stock_candles (
   id bigint generated always as identity primary key,
   exchange text not null,
   symbol_token text not null,
@@ -13,5 +13,5 @@ create table if not exists public.historical_candles (
   updated_at timestamptz not null default now()
 );
 
-create unique index if not exists historical_candles_unique_idx
-  on public.historical_candles (exchange, symbol_token, interval, candle_time);
+create unique index if not exists stock_candles_unique_idx
+  on public.stock_candles (exchange, symbol_token, interval, candle_time);

@@ -1,4 +1,4 @@
-# NSE candle SQL (`historical_candles`)
+# NSE candle SQL (`stock_candles`)
 
 - **Source rows:** `interval = 'ONE_MINUTE'` only. Higher timeframes are aggregated in SQL, not stored separately.
 - **Alignment:** Intraday buckets use **09:15 IST** session open per trading day (`Asia/Kolkata`), not `FLOOR(epoch / 300)` in UTC (that misaligns NSE).

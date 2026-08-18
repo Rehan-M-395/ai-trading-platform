@@ -46,7 +46,7 @@ export async function upsertCandles(rows: StoredCandle[]) {
   }
 
   const { error } = await supabase
-    .from("historical_candles")
+    .from("stock_candles")
     .upsert(rows, {
       onConflict: "stock_id,interval,candle_time",
       ignoreDuplicates: false,
