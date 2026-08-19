@@ -1,4 +1,4 @@
-import { getPgPool } from "../db/pool.js";
+import { getPool } from "../db/pool.js";
 import { CANDLE_QUERIES, type CandleTimeframe } from "../sql/candles/index.js";
 
 export type CandleRow = {
@@ -21,7 +21,7 @@ function num(v: unknown): number {
 }
 
 export async function assertActiveStock(stockId: number): Promise<boolean> {
-  const pool = getPgPool();
+  const pool = getPool();
   const { rows } = await pool.query<{ id: number }>(
     `SELECT id FROM public.stocks WHERE id = $1 AND is_active = true LIMIT 1`,
     [stockId],
@@ -57,7 +57,7 @@ export async function fetchCandles(params: FetchCandlesParams): Promise<{
   const toTs = to?.trim() ? to.trim() : null;
 
   const sql = CANDLE_QUERIES[tf];
-  const pool = getPgPool();
+  const pool = getPool();
 
   console.log("[candles] query", { stockId, tf, readStart, safeLimit, from: fromTs, to: toTs });
 

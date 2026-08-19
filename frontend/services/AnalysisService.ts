@@ -1,4 +1,4 @@
-export const analyseChart = async (symbol: string) => {
+export const analyseChart = async (stockId: number) => {
     const response = await fetch(
         "http://localhost:5000/api/analysis/Sup-Res",
         {
@@ -7,12 +7,12 @@ export const analyseChart = async (symbol: string) => {
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                symbol,
+                stockId,
                 timeframe: "5m"
             })
         }
     );
-
+    console.log("this is stock id",stockId);
     console.log("Status:", response.status);
 
     const result = await response.text();

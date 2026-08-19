@@ -3,7 +3,7 @@ import pg from "pg";
 
 dotenv.config();
 
-const { Pool } = pg;
+const { Pool: PgPool } = pg;
 
 function connectionString(): string | undefined {
   return (
@@ -16,21 +16,18 @@ function connectionString(): string | undefined {
 let poolInstance: pg.Pool | null = null;
 
 /**
- * PostgreSQL connection pool for candle aggregation queries.
- * Uses Supabase Session Pooler connection string.
+ * PostgreSQL connection pool
  */
-export function getPgPool(): pg.Pool {
+export function getPool(): pg.Pool {
   if (poolInstance) {
     return poolInstance;
   }
 
   const uri = connectionString();
 
-  console.log("DATABASE_URL:", uri);
-
   if (!uri) {
     throw new Error(
-      "DATABASE_URL is missing. Please set your PostgreSQL connection URI in .env",
+      "DATABASE_URL is missing. Please set your PostgreSQL connection URI in .env"
     );
   }
 
@@ -39,13 +36,13 @@ export function getPgPool(): pg.Pool {
     uri.includes("pooler.supabase.com") ||
     process.env.DATABASE_SSL === "true";
 
-  poolInstance = new Pool({
+  poolInstance = new PgPool({
     connectionString: uri,
 
     ssl: useSsl
       ? {
-          rejectUnauthorized: false,
-        }
+        rejectUnauthorized: false,
+      }
       : undefined,
 
     connectionTimeoutMillis: 10000,
@@ -69,7 +66,7 @@ export function getPgPool(): pg.Pool {
  */
 export async function testPgConnection() {
   try {
-    const pool = getPgPool();
+    const pool = getPool();
 
     const result = await pool.query("SELECT NOW()");
 
