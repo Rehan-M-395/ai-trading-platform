@@ -38,6 +38,7 @@ import { Input } from "@/components/ui/input";
 import { getStoredUser, type StoredUser } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { useReplay } from "../../../components/hooks/useReplay";
+import {analyseChart} from "../../../services/AnalysisService";
  
 type CandleData = {
   time: number;
@@ -252,6 +253,7 @@ function formatChartAxisTime(time: UTCTimestamp) {
 
 export default function MarketsPage() {
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+  const router = useRouter();
 
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartApiRef = useRef<IChartApi | null>(null);
@@ -275,7 +277,11 @@ export default function MarketsPage() {
   const [chartData, setChartData] = useState<ChartPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [selectedInterval, setSelectedInterval] = useState<IntervalOption>(intervalOptions[0]);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [zones, setZones] = useState([]);
+  const [selectedInterval, setSelectedInterval] = useState<IntervalOption>(
+    () => intervalOptions.find((i) => i.tf === "5m") ?? intervalOptions[0],
+  );
   const [showSma, setShowSma] = useState(false);
   const [showEma, setShowEma] = useState(false);
   const [showVolume, setShowVolume] = useState(false);
@@ -844,6 +850,21 @@ export default function MarketsPage() {
     });
   }, [searchTerm, stocks]);
 
+  const handleAIAnalysis = async () => {
+    if (!selectedStock || !selectedStock.name) {
+      return;
+    }
+    setIsAnalyzing(true);
+    try {
+      const data = await analyseChart(selectedStock.name);
+      setZones(data.zones);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
   if (!hydrated || !user) {
     return (
       <div className="fixed inset-0 flex items-center justify-center overflow-hidden bg-[#06030b]">
@@ -994,11 +1015,12 @@ export default function MarketsPage() {
               </button>
 
               <button
+                onClick={handleAIAnalysis}
                 type="button"
-                disabled={true}
+                disabled={isAnalyzing}
                 className="h-11 rounded-xl border border-sky-400/20 bg-sky-500/10 px-4 text-xs font-semibold uppercase tracking-[0.14em] text-sky-200 transition"
               >
-                AI Analysis
+                {isAnalyzing ? "Analyzing..." : "AI Analyse"}
               </button>
             </div>
           </div>

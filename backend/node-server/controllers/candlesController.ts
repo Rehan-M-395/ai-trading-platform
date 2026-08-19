@@ -14,7 +14,7 @@ type CandlesQuery = {
 
 export async function getCandles(req: Request<unknown, unknown, unknown, CandlesQuery>, res: Response) {
   const stockIdRaw = req.query.stockId;
-  const tf = (req.query.tf ?? "1m").toLowerCase();
+  const tf = (req.query.tf ?? "5m").toLowerCase();
   const start = Number.parseInt(req.query.start ?? "0", 10) || 0;
   const limit = Number.parseInt(req.query.limit ?? "200", 10) || 200;
 

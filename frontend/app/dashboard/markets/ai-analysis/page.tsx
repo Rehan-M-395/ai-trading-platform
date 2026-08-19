@@ -56,7 +56,7 @@ function buildCandlesUrl(
 ) {
   const params = new URLSearchParams();
   params.set("stockId", String(stockId));
-  params.set("tf", "1m");
+  params.set("tf", "5m");
   if (opts.start !== undefined) {
     params.set("start", String(opts.start));
   }
