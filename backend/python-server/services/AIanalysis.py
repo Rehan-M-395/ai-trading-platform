@@ -225,6 +225,20 @@ def find_support_resistance(candles):
         support_zones
     )
 
+    # Keep strongest resistance zones
+    resistance_zones = sorted(
+        resistance_zones,
+        key=lambda zone: zone["strength"],
+        reverse=True
+    )[:5]
+
+    # Keep strongest support zones
+    support_zones = sorted(
+        support_zones,
+        key=lambda zone: zone["strength"],
+        reverse=True
+    )[:5]
+
     # ==========================================
     # 6. RETURN FINAL ZONES
     # ==========================================

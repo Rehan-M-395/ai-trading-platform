@@ -497,7 +497,7 @@ export default function MarketsPage() {
 
         // strength is between 0 and 1
         const opacity =
-          0.08 + level.strength * 0.55;
+          0.25 + level.strength * 0.55;
 
         const color =
           baseColor === "resistance"
