@@ -22,18 +22,50 @@ export function AuthForm({ mode, onModeChange }: AuthFormProps) {
 
   const isRegister = mode === "register";
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    const fallbackName = email.split("@")[0] || "Trader";
+    try {
+      const endpoint = isRegister
+        ? "http://localhost:5000/api/user/register"
+        : "http://localhost:5000/api/user/login";
 
-    setStoredUser({
-      name: isRegister ? name || fallbackName : fallbackName,
-      email
-    });
+      const body = isRegister
+        ? {
+          name,
+          email,
+          password,
+        }
+        : {
+          email,
+          password,
+        };
 
-    void password;
-    router.push("/dashboard");
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        alert(data.message || "Authentication failed");
+        return;
+      }
+
+      setStoredUser({
+        name: data.user.name,
+        email: data.user.email,
+      });
+
+      router.push("/dashboard");
+    } catch (error) {
+      console.error("Authentication error:", error);
+      alert("Unable to connect to backend");
+    }
   }
 
   return (
