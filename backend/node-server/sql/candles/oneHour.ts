@@ -1,5 +1,5 @@
 /**
- * 1-hour (60-minute) bars, NSE 09:15 IST anchor.
+ * 1-hour (60-minute) bars, US 09:30 ET anchor.
  * Params: $1 stock_id, $2 from, $3 to, $4 limit, $5 offset
  */
 export const CANDLES_1H_SQL = `
@@ -12,10 +12,9 @@ WITH minute_rows AS (
     c.low,
     c.close,
     c.volume,
-    ((c.candle_time AT TIME ZONE 'Asia/Kolkata')::date + TIME '09:15:00') AT TIME ZONE 'Asia/Kolkata' AS session_open
-  FROM stock_candles c
+    ((c.candle_time AT TIME ZONE 'America/New_York')::date + TIME '09:30:00') AT TIME ZONE 'America/New_York' AS session_open
+  FROM candles_data c
   WHERE c.stock_id = $1
-    AND c.interval = 'ONE_MINUTE'
     AND ($2::timestamptz IS NULL OR c.candle_time >= $2::timestamptz)
     AND ($3::timestamptz IS NULL OR c.candle_time < $3::timestamptz)
 ),
@@ -28,7 +27,7 @@ sessioned AS (
     )::bigint AS min_from_open
   FROM minute_rows
   WHERE candle_time >= session_open
-    AND candle_time < session_open + INTERVAL '376 minutes'
+    AND candle_time < session_open + INTERVAL '390 minutes'
 ),
 bucketed AS (
   SELECT
@@ -42,7 +41,7 @@ bucketed AS (
     close,
     volume
   FROM sessioned
-  WHERE min_from_open < 376
+  WHERE min_from_open < 390
 ),
 agg AS (
   SELECT
@@ -57,6 +56,7 @@ agg AS (
   GROUP BY stock_id, bucket_time
 )
 SELECT
+  bucket_time AS candle_time,
   EXTRACT(EPOCH FROM bucket_time)::bigint AS time,
   open,
   high,

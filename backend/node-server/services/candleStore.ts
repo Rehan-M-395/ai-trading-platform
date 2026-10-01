@@ -1,3 +1,4 @@
+import { getPool } from "../db/pool.js";
 import { supabase } from "../utils/supabase/supaSetup.js";
 import { type AngelInterval } from "./angelHistoricalService.js";
 
@@ -60,15 +61,10 @@ export async function upsertCandles(rows: StoredCandle[]) {
 }
 
 export async function listActiveStocks() {
-  const { data, error } = await supabase
-    .from("stocks")
-    .select("id, exchange, symbol_token, trading_symbol, name, is_active")
-    .eq("is_active", true)
-    .order("trading_symbol", { ascending: true });
-
-  if (error) {
-    throw new Error(`Supabase stock fetch failed: ${error.message}`);
-  }
-
-  return (data ?? []) as StockRecord[];
+  const { rows } = await getPool().query<StockRecord>(`
+    SELECT id, exchange, symbol AS symbol_token, symbol AS trading_symbol, name
+    FROM public.stocks
+    ORDER BY symbol ASC
+  `);
+  return rows;
 }

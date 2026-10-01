@@ -137,7 +137,7 @@ function analyzeCandles(data: Candle[]): AnalysisResult {
 
 export default function AIAnalysisPage() {
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
-  const [exchange, setExchange] = useState("NSE");
+  const [exchange, setExchange] = useState("NASDAQ");
   const [symbolToken, setSymbolToken] = useState("");
   const [symbolLabel, setSymbolLabel] = useState("Selected Stock");
   const [stockIdParam, setStockIdParam] = useState("");
@@ -156,7 +156,7 @@ export default function AIAnalysisPage() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    setExchange(params.get("exchange") ?? "NSE");
+    setExchange(params.get("exchange") ?? "NASDAQ");
     setSymbolToken(params.get("symboltoken") ?? "");
     setSymbolLabel(params.get("symbol") ?? "Selected Stock");
     setStockIdParam(params.get("stockId") ?? "");

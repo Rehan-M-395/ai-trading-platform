@@ -74,9 +74,11 @@ function buildFallbackVolume(point: CandleData, index: number) {
 }
 
 function toChartTimestamp(point: CandleData): UTCTimestamp {
-  const timestampMs = point.date
-    ? new Date(point.date).getTime()
-    : Number(point.time) * 1000;
+  const timestampMs = point.candle_time
+    ? new Date(point.candle_time).getTime()
+    : point.date
+      ? new Date(point.date).getTime()
+      : Number(point.time) * 1000;
 
   return Math.floor(timestampMs / 1000) as UTCTimestamp;
 }
@@ -162,22 +164,22 @@ function addSessionBreaks<T extends { time: UTCTimestamp }>(
 }
 
 function formatDateLabel(time: UTCTimestamp) {
-  return new Intl.DateTimeFormat("en-IN", {
+  return new Intl.DateTimeFormat("en-US", {
     day: "2-digit",
     month: "short",
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-    timeZone: "Asia/Kolkata",
+    timeZone: "America/New_York",
   }).format(new Date(Number(time) * 1000));
 }
 
 function formatChartAxisTime(time: UTCTimestamp) {
-  return new Intl.DateTimeFormat("en-IN", {
+  return new Intl.DateTimeFormat("en-US", {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
-    timeZone: "Asia/Kolkata",
+    timeZone: "America/New_York",
   }).format(new Date(Number(time) * 1000));
 }
 
@@ -208,6 +210,7 @@ export default function MarketsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [replayAnalysisEnabled, setReplayAnalysisEnabled] = useState(false);
   const [zones, setZones] = useState([]);
   const [selectedInterval, setSelectedInterval] = useState<IntervalOption>(
     () => intervalOptions.find((i) => i.tf === "5m") ?? intervalOptions[0],
@@ -223,6 +226,13 @@ export default function MarketsPage() {
   const lastFitKeyRef = useRef<string>("");
   const supportSeriesRef = useRef<ISeriesApi<"Line">[]>([]);
   const resistanceSeriesRef = useRef<ISeriesApi<"Line">[]>([]);
+  const supportResistanceLinesRef = useRef<Array<{
+    series: ISeriesApi<"Line">;
+    startTime: UTCTimestamp;
+    price: number;
+  }>>([]);
+  const replayAnalysisRequestRef = useRef(0);
+  const lastAnalyzedReplayTimeRef = useRef<UTCTimestamp | null>(null);
 
   const selectedStock = useMemo(
     () => stocks.find((stock) => stock.symbol_token === selectedStockToken) ?? null,
@@ -281,6 +291,7 @@ export default function MarketsPage() {
 
     supportSeriesRef.current = [];
     resistanceSeriesRef.current = [];
+    supportResistanceLinesRef.current = [];
   }, []);
 
   useEffect(() => {
@@ -298,6 +309,9 @@ export default function MarketsPage() {
     hasFittedRef.current = false;
     lastFitKeyRef.current = "";
     clearSupportResistanceSeries();
+    replayAnalysisRequestRef.current += 1;
+    lastAnalyzedReplayTimeRef.current = null;
+    setReplayAnalysisEnabled(false);
     stopReplayRef.current();
   }, [clearSupportResistanceSeries, selectedStock?.symbol_token, selectedInterval.tf]);
 
@@ -441,7 +455,7 @@ export default function MarketsPage() {
         zoneType: "strong" | "weak";
         extreme?: boolean;
       }>;
-    }) => {
+    }, candlesForLevels: ChartPoint[] = visibleData) => {
       const chart = chartApiRef.current;
 
       if (!chart) {
@@ -449,7 +463,7 @@ export default function MarketsPage() {
         return;
       }
 
-      if (!chartData.length) {
+      if (!candlesForLevels.length) {
         console.warn("Chart data is empty");
         return;
       }
@@ -457,8 +471,7 @@ export default function MarketsPage() {
       // Remove old lines
       clearSupportResistanceSeries();
 
-      const lastCandle =
-        chartData[chartData.length - 1];
+      const lastCandle = candlesForLevels[candlesForLevels.length - 1];
 
       if (!lastCandle) {
         return;
@@ -482,8 +495,7 @@ export default function MarketsPage() {
         baseColor: "resistance" | "support",
       ) => {
 
-        const startCandle =
-          chartData[level.index];
+        const startCandle = candlesForLevels[level.index];
 
         if (!startCandle) {
           console.warn(
@@ -540,6 +552,11 @@ export default function MarketsPage() {
         seriesList.current.push(
           lineSeries
         );
+        supportResistanceLinesRef.current.push({
+          series: lineSeries,
+          startTime,
+          price: level.price,
+        });
       };
 
       // =========================
@@ -572,10 +589,49 @@ export default function MarketsPage() {
 
     },
     [
-      chartData,
       clearSupportResistanceSeries,
+      visibleData,
     ],
   );
+
+  const analyzeAndDrawLevels = useCallback(async (candlesForAnalysis: ChartPoint[]) => {
+    if (!selectedStock || !candlesForAnalysis.length) return;
+
+    const requestId = ++replayAnalysisRequestRef.current;
+    const lastCandle = candlesForAnalysis[candlesForAnalysis.length - 1];
+    const rawData = await analyseChart(
+      selectedStock.id,
+      selectedInterval.tf,
+      candlesForAnalysis.map((candle) => ({
+        timestamp: new Date(Number(candle.time) * 1000).toISOString(),
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: candle.volume,
+      })),
+    );
+
+    // A newer replay candle may have been analyzed while this request was in flight.
+    if (requestId !== replayAnalysisRequestRef.current) return;
+
+    const data = rawData?.zones ?? rawData;
+    if (!data || (!data.resistance_zones && !data.support_zones)) return;
+
+    const recentCandles = candlesForAnalysis.slice(-15);
+    const averageRange = recentCandles.reduce(
+      (sum, candle) => sum + Math.max(0, candle.high - candle.low),
+      0,
+    ) / Math.max(recentCandles.length, 1);
+    const staleDistance = Math.max(averageRange * 3, Math.abs(lastCandle.close) * 0.01);
+    const isNearPrice = (zone: { price: number }) =>
+      Math.abs(zone.price - lastCandle.close) <= staleDistance;
+
+    drawSupportResistance({
+      resistance_zones: (data.resistance_zones ?? []).filter(isNearPrice),
+      support_zones: (data.support_zones ?? []).filter(isNearPrice),
+    }, candlesForAnalysis);
+  }, [drawSupportResistance, selectedInterval.tf, selectedStock]);
 
   const mapToChartPoints = useCallback((raw: CandleData[]) => {
     const mapped = raw.map((point, index) => {
@@ -593,6 +649,18 @@ export default function MarketsPage() {
     mapped.sort((a, b) => a.time - b.time);
     return mapped;
   }, []);
+
+  useEffect(() => {
+    const lastCandle = visibleData[visibleData.length - 1];
+    if (!lastCandle) return;
+
+    for (const line of supportResistanceLinesRef.current) {
+      line.series.setData([
+        { time: line.startTime, value: line.price },
+        { time: lastCandle.time, value: line.price },
+      ]);
+    }
+  }, [visibleData]);
 
   const loadPreviousData = useCallback(async () => {
     const chart = chartApiRef.current;
@@ -1043,10 +1111,10 @@ export default function MarketsPage() {
     const deltaPct = previous?.close ? (delta / previous.close) * 100 : 0;
 
     return {
-      price: latest ? latest.close.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "--",
+      price: latest ? latest.close.toLocaleString("en-US", { maximumFractionDigits: 2 }) : "--",
       change: `${delta >= 0 ? "+" : ""}${deltaPct.toFixed(2)}%`,
-      high: latest ? latest.high.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "--",
-      low: latest ? latest.low.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "--",
+      high: latest ? latest.high.toLocaleString("en-US", { maximumFractionDigits: 2 }) : "--",
+      low: latest ? latest.low.toLocaleString("en-US", { maximumFractionDigits: 2 }) : "--",
     };
   }, [visibleData]);
 
@@ -1068,35 +1136,19 @@ export default function MarketsPage() {
       return;
     }
 
+    const candlesForAnalysis = visibleData.slice(-4000);
+    if (!candlesForAnalysis.length) return;
+
+    if (isReplay) {
+      pause();
+      lastAnalyzedReplayTimeRef.current = candlesForAnalysis[candlesForAnalysis.length - 1].time;
+      setReplayAnalysisEnabled(true);
+    }
+
     setIsAnalyzing(true);
 
     try {
-      const rawData = await analyseChart(selectedStock.id);
-
-      console.log("RAW ANALYSIS:", rawData);
-
-      const data = rawData?.zones ?? rawData;
-
-      if (
-        !data ||
-        (
-          !data.resistance_zones &&
-          !data.support_zones
-        )
-      ) {
-        console.warn(
-          "No support/resistance zones returned",
-          rawData
-        );
-
-        return;
-      }
-
-      drawSupportResistance({
-        resistance_zones: data.resistance_zones ?? [],
-        support_zones: data.support_zones ?? [],
-      });
-
+      await analyzeAndDrawLevels(candlesForAnalysis);
     } catch (error) {
       console.error(
         "AI Analysis failed:",
@@ -1106,6 +1158,19 @@ export default function MarketsPage() {
       setIsAnalyzing(false);
     }
   };
+
+  useEffect(() => {
+    if (!isReplay || !replayAnalysisEnabled || !visibleData.length) return;
+
+    const candlesForAnalysis = visibleData.slice(-4000);
+    const replayTime = candlesForAnalysis[candlesForAnalysis.length - 1].time;
+    if (replayTime === lastAnalyzedReplayTimeRef.current) return;
+
+    lastAnalyzedReplayTimeRef.current = replayTime;
+    void analyzeAndDrawLevels(candlesForAnalysis).catch((error: unknown) => {
+      console.error("Replay support/resistance update failed:", error);
+    });
+  }, [analyzeAndDrawLevels, isReplay, replayAnalysisEnabled, visibleData]);
 
   if (!hydrated || !user) {
     return (

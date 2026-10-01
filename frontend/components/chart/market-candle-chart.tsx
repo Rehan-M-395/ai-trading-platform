@@ -12,6 +12,7 @@ import {
 } from "lightweight-charts";
 
 type Candle = {
+  candle_time?: string;
   time?: number;
   date?: string;
   open: number;
@@ -53,16 +54,20 @@ type MarketCandleChartProps = {
 };
 
 function toUtcTimestamp(candle: Candle): UTCTimestamp {
-  const ms = candle.date ? new Date(candle.date).getTime() : (candle.time ?? 0) * 1000;
+  const ms = candle.candle_time
+    ? new Date(candle.candle_time).getTime()
+    : candle.date
+      ? new Date(candle.date).getTime()
+      : (candle.time ?? 0) * 1000;
   return Math.floor(ms / 1000) as UTCTimestamp;
 }
 
 function formatAiAxisTime(time: UTCTimestamp) {
-  return new Intl.DateTimeFormat("en-IN", {
+  return new Intl.DateTimeFormat("en-US", {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
-    timeZone: "Asia/Kolkata",
+    timeZone: "America/New_York",
   }).format(new Date(Number(time) * 1000));
 }
 
@@ -103,13 +108,13 @@ export function MarketCandleChart({
       },
       localization: {
         timeFormatter: (time: number) =>
-          new Intl.DateTimeFormat("en-IN", {
+          new Intl.DateTimeFormat("en-US", {
             day: "2-digit",
             month: "short",
             hour: "2-digit",
             minute: "2-digit",
             hour12: false,
-            timeZone: "Asia/Kolkata",
+            timeZone: "America/New_York",
           }).format(new Date(Number(time) * 1000)),
       },
       grid: {

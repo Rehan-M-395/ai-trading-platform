@@ -2,6 +2,9 @@ import { getPool } from "../db/pool.js";
 import { CANDLE_QUERIES, type CandleTimeframe } from "../sql/candles/index.js";
 
 export type CandleRow = {
+  /** RFC3339 UTC instant, e.g. 2026-09-30T13:30:00.000Z. */
+  candle_time: string;
+  /** Unix seconds for lightweight-charts and existing clients. */
   time: number;
   open: number;
   high: number;
@@ -23,7 +26,7 @@ function num(v: unknown): number {
 export async function assertActiveStock(stockId: number): Promise<boolean> {
   const pool = getPool();
   const { rows } = await pool.query<{ id: number }>(
-    `SELECT id FROM public.stocks WHERE id = $1 AND is_active = true LIMIT 1`,
+    `SELECT id FROM public.stocks WHERE id = $1 LIMIT 1`,
     [stockId],
   );
   return rows.length > 0;
@@ -62,6 +65,7 @@ export async function fetchCandles(params: FetchCandlesParams): Promise<{
   console.log("[candles] query", { stockId, tf, readStart, safeLimit, from: fromTs, to: toTs });
 
   const { rows } = await pool.query<{
+    candle_time: Date | string;
     time: string | number;
     open: number;
     high: number;
@@ -82,6 +86,7 @@ export async function fetchCandles(params: FetchCandlesParams): Promise<{
 
   const total = Number(rows[0].full_count);
   const data: CandleRow[] = rows.map((r) => ({
+    candle_time: (r.candle_time instanceof Date ? r.candle_time : new Date(r.candle_time)).toISOString(),
     time: num(r.time),
     open: num(r.open),
     high: num(r.high),

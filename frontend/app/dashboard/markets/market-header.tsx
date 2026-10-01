@@ -56,7 +56,7 @@ export function MarketHeader({
               <span className="text-sm text-slate-400">{selectedStock?.exchange ?? "--"}</span>
             </div>
             <p className="mt-1 text-sm text-slate-400">
-              Rs. {marketSnapshot.price} | H {marketSnapshot.high} | L {marketSnapshot.low}
+              ${marketSnapshot.price} | H {marketSnapshot.high} | L {marketSnapshot.low}
             </p>
           </div>
         </div>

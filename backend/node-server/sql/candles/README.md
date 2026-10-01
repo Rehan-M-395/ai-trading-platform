@@ -1,8 +1,8 @@
-# NSE candle SQL (`stock_candles`)
+# US candle SQL (`candles_data`)
 
-- **Source rows:** `interval = 'ONE_MINUTE'` only. Higher timeframes are aggregated in SQL, not stored separately.
-- **Alignment:** Intraday buckets use **09:15 IST** session open per trading day (`Asia/Kolkata`), not `FLOOR(epoch / 300)` in UTC (that misaligns NSE).
-- **Session window:** Regular cash session only: `09:15` inclusive through `15:30` inclusive (376 one-minute slots from open).
+- **Source rows:** `candles_data` contains one-minute rows. Higher timeframes are aggregated in SQL, not stored separately.
+- **Alignment:** Intraday buckets use **09:30 America/New_York** session open per trading day, not `FLOOR(epoch / 300)` in UTC.
+- **Session window:** Regular cash session only: `09:30` inclusive through `16:00` exclusive (390 one-minute bars from open).
 - **OHLC:** `open` = first minute’s open by `candle_time ASC`; `close` = last minute’s close by `candle_time DESC`; `high`/`low` = max/min; `volume` = sum.
 - **API `time`:** Unix seconds at **bar open** (UTC instant) — compatible with `lightweight-charts` `UTCTimestamp`.
 - **Gaps:** Missing 1m rows in the DB still produce **no bar** for that period. SQL does not synthesize empty bars (that would be a separate feature).

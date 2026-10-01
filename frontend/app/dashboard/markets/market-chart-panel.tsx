@@ -48,7 +48,7 @@ export function MarketChartPanel({
         <div className="flex items-stretch gap-3">
           <div className="rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 backdrop-blur-xl">
             <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Session</p>
-            <p className="mt-2 text-xl font-semibold text-white">Rs. {marketSnapshot.price}</p>
+            <p className="mt-2 text-xl font-semibold text-white">${marketSnapshot.price}</p>
             <div className="mt-2 flex items-center gap-2 text-xs text-slate-400">
               <Sparkles className="h-3.5 w-3.5 text-fuchsia-300" />
               Adaptive chart workspace
@@ -64,16 +64,16 @@ export function MarketChartPanel({
             </p>
             <div className="mt-3 flex items-center gap-4 text-sm">
               <span className="text-slate-300">
-                O <span className="font-semibold text-white">{activePoint?.open.toLocaleString("en-IN", { maximumFractionDigits: 2 }) ?? "--"}</span>
+                O <span className="font-semibold text-white">{activePoint ? `$${activePoint.open.toLocaleString("en-US", { maximumFractionDigits: 2 })}` : "--"}</span>
               </span>
               <span className="text-slate-300">
-                H <span className="font-semibold text-emerald-300">{activePoint?.high.toLocaleString("en-IN", { maximumFractionDigits: 2 }) ?? "--"}</span>
+                H <span className="font-semibold text-emerald-300">{activePoint ? `$${activePoint.high.toLocaleString("en-US", { maximumFractionDigits: 2 })}` : "--"}</span>
               </span>
               <span className="text-slate-300">
-                L <span className="font-semibold text-rose-300">{activePoint?.low.toLocaleString("en-IN", { maximumFractionDigits: 2 }) ?? "--"}</span>
+                L <span className="font-semibold text-rose-300">{activePoint ? `$${activePoint.low.toLocaleString("en-US", { maximumFractionDigits: 2 })}` : "--"}</span>
               </span>
               <span className="text-slate-300">
-                C <span className="font-semibold text-white">{activePoint?.close.toLocaleString("en-IN", { maximumFractionDigits: 2 }) ?? "--"}</span>
+                C <span className="font-semibold text-white">{activePoint ? `$${activePoint.close.toLocaleString("en-US", { maximumFractionDigits: 2 })}` : "--"}</span>
               </span>
             </div>
           </div>

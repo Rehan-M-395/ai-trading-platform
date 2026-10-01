@@ -1,6 +1,8 @@
 import type { UTCTimestamp } from "lightweight-charts";
 
 export type CandleData = {
+  /** RFC3339 timestamp with timezone, returned by the candles API. */
+  candle_time?: string;
   time: number;
   date?: string;
   open: number;

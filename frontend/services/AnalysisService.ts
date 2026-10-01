@@ -1,29 +1,33 @@
-export const analyseChart = async (stockId: number) => {
-    const response = await fetch(
-        "http://localhost:5000/api/analysis/Sup-Res",
-        {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-                stockId,
-                timeframe: "5m"
-            })
-        }
-    );
-    console.log("this is stock id",stockId);
-    console.log("Status:", response.status);
+type AnalysisCandle = {
+  timestamp: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
 
-    const result = await response.text();
+export const analyseChart = async (
+  stockId: number,
+  timeframe = "5m",
+  candles?: AnalysisCandle[],
+) => {
+  const response = await fetch(
+    `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"}/api/analysis/Sup-Res`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ stockId, timeframe, candles }),
+    },
+  );
 
-    console.log("Backend response:", result);
+  const result = await response.text();
 
-    if (!response.ok) {
-        throw new Error(
-            `Analysis failed: ${response.status} - ${result}`
-        );
-    }
+  if (!response.ok) {
+    throw new Error(`Analysis failed: ${response.status} - ${result}`);
+  }
 
-    return JSON.parse(result);
+  return JSON.parse(result);
 };
