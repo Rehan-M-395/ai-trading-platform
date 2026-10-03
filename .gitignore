@@ -29,3 +29,4 @@ Thumbs.db
 venv/
 .venv/
 backend/python-server/venv/
+backend/python-server/.env

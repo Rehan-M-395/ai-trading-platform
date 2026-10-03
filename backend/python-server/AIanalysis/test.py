@@ -1,5 +1,5 @@
 import json
-
+from AIanalysis.trend import detect_trend_phases
 from models.candles import Candle
 from AIanalysis.functions import detect_trend
 
@@ -32,6 +32,37 @@ if __name__ == "__main__":
     # =========================================================
 
     result = detect_trend(candles)
+    trend_result = detect_trend_phases(result["swings"])
+
+    print("\n========================================")
+    print("          TREND HISTORY")
+    print("========================================")
+
+    for i, phase in enumerate(trend_result["phases"], start=1):
+
+        print(f"\n{i}. {phase['trend'].upper()}")
+
+        print(
+            f"   Candle: "
+            f"{phase['start_index']} → {phase['end_index']}"
+        )
+
+        print(
+            f"   Time: "
+            f"{phase['start_time']} → {phase['end_time']}"
+        )
+
+        print(
+            "   Structure:",
+            " → ".join(phase["structure"])
+        )
+
+    print("\n========================================")
+    print(
+        "CURRENT TREND:",
+        trend_result["current_trend"].upper()
+    )
+    print("========================================")
 
     # =========================================================
     # TREND
