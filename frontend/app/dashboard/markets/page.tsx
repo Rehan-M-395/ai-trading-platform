@@ -1241,6 +1241,11 @@ export default function MarketsPage() {
                 stop();
                 setIsSelectingReplay(false);
                 setHoveredTime(null);
+                setReplayAnalysisEnabled(false);
+                lastAnalyzedReplayTimeRef.current = null;
+                replayAnalysisRequestRef.current += 1;
+                setIsAnalyzing(false);
+                clearSupportResistanceSeries();
               }}
               onBackward={backward}
               onForward={forward}

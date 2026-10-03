@@ -1,12 +1,10 @@
 import axios from "axios";
-import { Pool } from "pg";
 import dotenv from "dotenv";
+import { getPool } from "../db/pool.js";
 
 dotenv.config();
 
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-});
+const pool = getPool();
 
 const ALPACA_API_KEY = process.env.ALPACA_API_KEY!;
 const ALPACA_SECRET_KEY = process.env.ALPACA_SECRET_KEY!;
@@ -14,6 +12,10 @@ const ALPACA_SECRET_KEY = process.env.ALPACA_SECRET_KEY!;
 const STOCKS = ["AAPL", "NVDA", "TSLA"];
 
 const ALPACA_URL = "https://data.alpaca.markets/v2/stocks";
+
+// =========================
+// Types
+// =========================
 
 interface AlpacaBar {
     t: string;
@@ -31,7 +33,10 @@ interface AlpacaResponse {
     next_page_token: string | null;
 }
 
+// =========================
 // Get last 6 months
+// =========================
+
 function getDateRange() {
     const end = new Date();
 
@@ -44,31 +49,40 @@ function getDateRange() {
     };
 }
 
-// Get stock ID from stocks table
+// =========================
+// Get stock ID
+// =========================
+
 async function getStockId(symbol: string): Promise<number> {
     const result = await pool.query(
         `
-    SELECT id
-    FROM stocks
-    WHERE symbol = $1
-    `,
+        SELECT id
+        FROM stocks
+        WHERE symbol = $1
+        `,
         [symbol]
     );
 
     if (result.rows.length === 0) {
-        throw new Error(`Stock ${symbol} not found in stocks table`);
+        throw new Error(
+            `Stock ${symbol} not found in stocks table`
+        );
     }
 
     return result.rows[0].id;
 }
 
-// Fetch one page from Alpaca
+// =========================
+// Fetch bars from Alpaca
+// =========================
+
 async function fetchBars(
     symbol: string,
     start: string,
     end: string,
     pageToken?: string
 ): Promise<AlpacaResponse> {
+
     const response = await axios.get(
         `${ALPACA_URL}/${symbol}/bars`,
         {
@@ -78,6 +92,7 @@ async function fetchBars(
                 end,
                 limit: 10000,
                 feed: "iex",
+
                 ...(pageToken && {
                     page_token: pageToken,
                 }),
@@ -93,7 +108,10 @@ async function fetchBars(
     return response.data;
 }
 
-// Insert candles into candles_data
+// =========================
+// Insert candles
+// =========================
+
 async function insertCandles(
     stockId: number,
     bars: AlpacaBar[]
@@ -108,23 +126,34 @@ async function insertCandles(
         await client.query("BEGIN");
 
         for (const bar of bars) {
+
             await client.query(
                 `
-        INSERT INTO candles_data (
-          stock_id,
-          candle_time,
-          open,
-          high,
-          low,
-          close,
-          volume,
-          vwap,
-          trade_count
-        )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-        ON CONFLICT (stock_id, candle_time)
-        DO NOTHING
-        `,
+                INSERT INTO candles_data (
+                    stock_id,
+                    candle_time,
+                    open,
+                    high,
+                    low,
+                    close,
+                    volume,
+                    vwap,
+                    trade_count
+                )
+                VALUES (
+                    $1,
+                    $2,
+                    $3,
+                    $4,
+                    $5,
+                    $6,
+                    $7,
+                    $8,
+                    $9
+                )
+                ON CONFLICT (stock_id, candle_time)
+                DO NOTHING
+                `,
                 [
                     stockId,
                     bar.t,
@@ -144,16 +173,25 @@ async function insertCandles(
         console.log(
             `Inserted ${bars.length} candles`
         );
+
     } catch (error) {
+
         await client.query("ROLLBACK");
+
         throw error;
+
     } finally {
+
         client.release();
     }
 }
 
+// =========================
 // Download one stock
+// =========================
+
 async function downloadStock(symbol: string) {
+
     console.log(`\nDownloading ${symbol}...`);
 
     const stockId = await getStockId(symbol);
@@ -162,10 +200,15 @@ async function downloadStock(symbol: string) {
 
     const { start, end } = getDateRange();
 
+    console.log(`Start: ${start}`);
+    console.log(`End:   ${end}`);
+
     let pageToken: string | undefined;
+
     let totalCandles = 0;
 
     while (true) {
+
         const data = await fetchBars(
             symbol,
             start,
@@ -180,12 +223,17 @@ async function downloadStock(symbol: string) {
         );
 
         if (bars.length > 0) {
-            await insertCandles(stockId, bars);
+
+            await insertCandles(
+                stockId,
+                bars
+            );
 
             totalCandles += bars.length;
         }
 
-        pageToken = data.next_page_token ?? undefined;
+        pageToken =
+            data.next_page_token ?? undefined;
 
         if (!pageToken) {
             break;
@@ -197,22 +245,36 @@ async function downloadStock(symbol: string) {
     );
 }
 
+// =========================
 // Main
+// =========================
+
 async function main() {
+
     try {
-        console.log("Starting historical data download...");
+
+        console.log(
+            "Starting historical data download..."
+        );
 
         for (const symbol of STOCKS) {
+
             await downloadStock(symbol);
         }
 
-        console.log("\nAll stocks completed.");
+        console.log(
+            "\nAll stocks completed."
+        );
+
     } catch (error: any) {
+
         console.error(
             "Error:",
             error.response?.data || error.message
         );
+
     } finally {
+
         await pool.end();
     }
 }
