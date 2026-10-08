@@ -1,7 +1,13 @@
 import json
-from AIanalysis.trend import detect_trend_phases
+from pathlib import Path
+import sys
+
+SERVER_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(SERVER_ROOT))
+
+from analysis.trend import detect_trend_phases
 from models.candles import Candle
-from AIanalysis.functions import detect_trend
+from analysis.market_structure import detect_trend
 
 
 if __name__ == "__main__":
@@ -10,7 +16,7 @@ if __name__ == "__main__":
     # LOAD CANDLES
     # =========================================================
 
-    with open("AIanalysis/candles.json", "r") as file:
+    with (SERVER_ROOT / "tests" / "fixtures" / "candles.json").open("r") as file:
         data = json.load(file)
 
     candles = [

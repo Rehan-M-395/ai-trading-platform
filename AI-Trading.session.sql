@@ -1,1 +1,1 @@
-select * from candles_data;
+select * from candles_data where stock_id=1 ORDER BY id limit 500;

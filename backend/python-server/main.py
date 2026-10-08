@@ -1,17 +1,27 @@
-from fastapi import FastAPI
-from routes.analysis import router as analysis_router
 import os
+
 from dotenv import load_dotenv
-from groq import Groq
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from routes.analysis import router as analysis_router
+from routes.jarvis import router as jarvis_router
 
 load_dotenv()
 
-api_key = os.getenv("GROQ_API_KEY")
+app = FastAPI(title="AI Trading Python API")
 
-client = Groq(api_key=api_key)
+allowed_origins = os.getenv(
+    "FRONTEND_ORIGINS",
+    "http://localhost:3000,http://127.0.0.1:3000",
+).split(",")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[origin.strip() for origin in allowed_origins if origin.strip()],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-print("Groq client initialized",client)
-
-# app = FastAPI()
-
-# app.include_router(analysis_router)
+app.include_router(analysis_router)
+app.include_router(jarvis_router)

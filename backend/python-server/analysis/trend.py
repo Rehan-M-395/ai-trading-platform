@@ -1,4 +1,4 @@
-# AIanalysis/trend.py
+# Trend phase detection built on classified market-structure swings.
 
 def detect_trend_phases(swings):
     """

@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from models.candles import AnalysisRequest
-from services.AIanalysis import find_support_resistance
-from AIanalysis.functions import detect_trend
+from analysis.support_resistance import find_support_resistance
+from analysis.market_structure import detect_trend
 
 router = APIRouter()
 
@@ -16,8 +16,9 @@ async def analyse(data: AnalysisRequest):
     return zones
 
 
-@router.post("/detect_tren")
-async def Aianalyse(data: AnalysisRequest):
+@router.post("/trendline")
+@router.post("/detect_tren", include_in_schema=False)
+async def detect_trend_route(data: AnalysisRequest):
     print("received:", len(data.candles))
     trendline = detect_trend(data.candles)
     print(trendline)

@@ -24,6 +24,7 @@ import { MarketChartPanel } from "./market-chart-panel";
 import { MarketHeader } from "./market-header";
 import { MarketSidebar } from "./market-sidebar";
 import { ReplayControls } from "./replay-controls";
+import { JarvisPanel } from "./jarvis-panel";
 import type { CandleData, CandleResponse, ChartPoint, ChartTf, IntervalOption, StockMeta} from "./market.types";
 
 const intervalOptions: IntervalOption[] = [
@@ -1215,7 +1216,7 @@ export default function MarketsPage() {
           onAnalyze={handleAIAnalysis}
         />
 
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="flex min-h-0 flex-1 overflow-hidden">
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             <ReplayControls
               isReplay={isReplay}
@@ -1262,6 +1263,7 @@ export default function MarketsPage() {
               formatDateLabel={(time) => formatDateLabel(time as UTCTimestamp)}
             />
           </div>
+          <JarvisPanel />
         </div>
       </section>
     </main>
