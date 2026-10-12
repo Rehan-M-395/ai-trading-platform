@@ -10,7 +10,7 @@ router = APIRouter(prefix="/jarvis", tags=["Jarvis"])
 
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
-    content: str = Field(min_length=1, max_length=4000)
+    content: str = Field(min_length=1, max_length=15000)
 
 
 class ChatRequest(BaseModel):
@@ -30,6 +30,13 @@ async def chat(data: ChatRequest):
     except RuntimeError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     except Exception as error:
-        raise HTTPException(status_code=502, detail="Jarvis could not reach Groq.") from error
+        import traceback
+
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=502,
+            detail=str(error)
+        ) from error
 
     return ChatResponse(reply=reply)

@@ -52,10 +52,17 @@ export function JarvisPanel() {
         body: JSON.stringify({
           messages: history
             .filter((message) => message.id !== 0 || message.role !== "assistant")
-            .map(({ role, text: content }) => ({ role, content })),
+            .slice(-10)
+            .map(({ role, text: content }) => ({
+              role,
+              content: content.slice(0, 15000),
+            })),
         }),
       });
       const payload = await response.json();
+      console.log("Jarvis API payload:", payload);
+      console.log("Reply:", payload.reply);
+      console.log("Reply type:", typeof payload.reply);
       if (!response.ok) {
         throw new Error(payload.detail ?? `Jarvis request failed (${response.status}).`);
       }
